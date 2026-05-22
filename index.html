@@ -4,147 +4,194 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>個人資產管理 Dashboard</title>
-<style>
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    margin: 0;
-    background: #f4f5f7;
-    color: #374151;
-  }
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      background: #f4f5f7;
+      color: #374151;
+    }
 
-  header {
-    background: #334155;
-    color: #f8fafc;
-    padding: 24px;
-  }
+    header {
+      background: #334155;
+      color: #f8fafc;
+      padding: 24px;
+    }
 
-  header p {
-    color: #e2e8f0;
-  }
+    header p {
+      color: #e2e8f0;
+      margin-bottom: 0;
+    }
 
-  main {
-    max-width: 1100px;
-    margin: 24px auto;
-    padding: 0 16px;
-  }
+    main {
+      max-width: 1180px;
+      margin: 24px auto;
+      padding: 0 16px;
+    }
 
-  h1, h2 {
-    margin-top: 0;
-    color: #334155;
-  }
+    h1, h2, h3 {
+      margin-top: 0;
+      color: #334155;
+    }
 
-  header h1 {
-    color: #f8fafc;
-  }
+    header h1 {
+      color: #f8fafc;
+    }
 
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 16px;
-    margin-bottom: 24px;
-  }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
 
-  .card {
-    background: #ffffff;
-    padding: 20px;
-    border-radius: 16px;
-    box-shadow: 0 2px 10px rgba(15, 23, 42, 0.06);
-    border: 1px solid #e5e7eb;
-  }
+    .card {
+      background: #ffffff;
+      padding: 20px;
+      border-radius: 16px;
+      box-shadow: 0 2px 10px rgba(15, 23, 42, 0.06);
+      border: 1px solid #e5e7eb;
+    }
 
-  .value {
-    font-size: 28px;
-    font-weight: 700;
-    margin-top: 8px;
-    color: #475569;
-  }
+    .value {
+      font-size: 28px;
+      font-weight: 700;
+      margin-top: 8px;
+      color: #475569;
+    }
 
-  form {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 12px;
-    align-items: end;
-  }
+    form {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
 
-  label {
-    font-size: 14px;
-    font-weight: 600;
-    color: #475569;
-  }
+    label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #475569;
+      display: block;
+      margin-bottom: 4px;
+    }
 
-  input, select, button {
-    width: 100%;
-    box-sizing: border-box;
-    padding: 10px;
-    border-radius: 10px;
-    border: 1px solid #cbd5e1;
-    font-size: 15px;
-  }
+    input, select, button {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid #cbd5e1;
+      font-size: 15px;
+    }
 
-  input, select {
-    background: #ffffff;
-    color: #374151;
-  }
+    input, select {
+      background: #ffffff;
+      color: #374151;
+    }
 
-  button {
-    background: #64748b;
-    color: white;
-    border: none;
-    font-weight: 700;
-    cursor: pointer;
-  }
+    button {
+      background: #64748b;
+      color: white;
+      border: none;
+      font-weight: 700;
+      cursor: pointer;
+    }
 
-  button:hover {
-    background: #475569;
-  }
+    button:hover {
+      background: #475569;
+    }
 
-  .danger {
-    background: #b91c1c;
-  }
+    .secondary {
+      background: #e2e8f0;
+      color: #334155;
+    }
 
-  .danger:hover {
-    background: #991b1b;
-  }
+    .secondary:hover {
+      background: #cbd5e1;
+    }
 
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 12px;
-    background: white;
-    border-radius: 12px;
-    overflow: hidden;
-  }
+    .danger {
+      background: #b91c1c;
+    }
 
-  th, td {
-    padding: 12px;
-    border-bottom: 1px solid #e5e7eb;
-    text-align: left;
-  }
+    .danger:hover {
+      background: #991b1b;
+    }
 
-  th {
-    background: #f1f5f9;
-    color: #475569;
-  }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      background: white;
+      border-radius: 12px;
+      overflow: hidden;
+    }
 
-  .warning {
-    color: #b91c1c;
-    font-weight: 700;
-  }
+    th, td {
+      padding: 12px;
+      border-bottom: 1px solid #e5e7eb;
+      text-align: left;
+      vertical-align: top;
+    }
 
-  .muted {
-    color: #64748b;
-    font-size: 14px;
-  }
+    th {
+      background: #f1f5f9;
+      color: #475569;
+      white-space: nowrap;
+    }
 
-  .section {
-    margin-bottom: 28px;
-  }
-</style>
+    .warning {
+      color: #b91c1c;
+      font-weight: 700;
+    }
+
+    .muted {
+      color: #64748b;
+      font-size: 14px;
+    }
+
+    .section {
+      margin-bottom: 28px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .small-button {
+      padding: 6px 10px;
+      font-size: 13px;
+      border-radius: 8px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    .status {
+      margin-top: 8px;
+      font-size: 14px;
+      color: #64748b;
+    }
+  </style>
 </head>
 <body>
   <header>
     <h1>個人資產管理 Dashboard</h1>
-    <p>追蹤資產、負債、持股曝險與再平衡提醒</p>
+    <p>追蹤多幣別資產、股票 / ETF 股數、負債、匯率與持股曝險</p>
   </header>
 
   <main>
@@ -169,6 +216,7 @@
 
     <section class="card section">
       <h2>新增資產 / 負債</h2>
+
       <form id="assetForm">
         <div>
           <label>類別</label>
@@ -187,12 +235,45 @@
 
         <div>
           <label>名稱</label>
-          <input id="name" placeholder="例如：0050、NVDA、房貸" required />
+          <input id="name" placeholder="例如：0050、VT、現金帳戶、房貸" required />
         </div>
 
         <div>
-          <label>金額 TWD</label>
-          <input id="amount" type="number" placeholder="正數為資產，負債可填正數" required />
+          <label>代號</label>
+          <input id="symbol" placeholder="例如：0050、AAPL、VT，可選填" />
+        </div>
+
+        <div>
+          <label>幣別</label>
+          <select id="currency" required>
+            <option value="TWD">TWD 新台幣</option>
+            <option value="USD">USD 美元</option>
+            <option value="JPY">JPY 日圓</option>
+            <option value="EUR">EUR 歐元</option>
+            <option value="GBP">GBP 英鎊</option>
+            <option value="AUD">AUD 澳幣</option>
+            <option value="CAD">CAD 加幣</option>
+            <option value="NZD">NZD 紐幣</option>
+            <option value="CHF">CHF 瑞郎</option>
+            <option value="HKD">HKD 港幣</option>
+            <option value="SGD">SGD 新幣</option>
+            <option value="CNY">CNY 人民幣</option>
+          </select>
+        </div>
+
+        <div>
+          <label>股數 / 單位數</label>
+          <input id="quantity" type="number" step="0.0001" placeholder="股票 / ETF 使用" />
+        </div>
+
+        <div>
+          <label>現價</label>
+          <input id="price" type="number" step="0.0001" placeholder="股票 / ETF 使用" />
+        </div>
+
+        <div>
+          <label>金額</label>
+          <input id="amount" type="number" step="0.01" placeholder="非股票資產使用" />
         </div>
 
         <div>
@@ -204,6 +285,56 @@
           <button type="submit">新增</button>
         </div>
       </form>
+
+      <p class="muted">
+        股票 / ETF 若填入「股數」與「現價」，系統會自動用股數 × 現價計算金額；其他資產可直接填「金額」。
+      </p>
+    </section>
+
+    <section class="card section">
+      <h2>匯率設定</h2>
+      <p class="muted">系統以 TWD 作為基準幣。下方代表「1 單位外幣 = 多少 TWD」。</p>
+
+      <div class="row">
+        <div>
+          <button type="button" onclick="fetchExchangeRates()">更新匯率</button>
+          <div class="status" id="fxStatus">尚未更新匯率。若更新失敗，可手動調整。</div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>幣別</th>
+              <th>匯率</th>
+            </tr>
+          </thead>
+          <tbody id="fxTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card section">
+      <h2>美股報價設定</h2>
+      <p class="muted">
+        美股現價可用 Alpha Vantage API key 抓取。台股即時報價先保留手動輸入，之後再接台股行情 API。
+      </p>
+
+      <div class="row">
+        <div>
+          <label>Alpha Vantage API Key</label>
+          <input id="alphaKey" placeholder="貼上你的 Alpha Vantage API key" />
+        </div>
+        <div>
+          <button type="button" onclick="saveAlphaKey()">儲存 API Key</button>
+        </div>
+        <div>
+          <button type="button" class="secondary" onclick="updateUsStockPrices()">更新美股 / 美股 ETF 現價</button>
+        </div>
+      </div>
+
+      <div class="status" id="stockStatus">尚未更新股價。</div>
     </section>
 
     <section class="card section">
@@ -215,19 +346,27 @@
 
     <section class="card section">
       <h2>資產清單</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>類別</th>
-            <th>名稱</th>
-            <th>金額</th>
-            <th>比重</th>
-            <th>備註</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody id="assetTable"></tbody>
-      </table>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>類別</th>
+              <th>名稱</th>
+              <th>代號</th>
+              <th>幣別</th>
+              <th>股數</th>
+              <th>現價</th>
+              <th>原幣金額</th>
+              <th>TWD 估值</th>
+              <th>比重</th>
+              <th>備註</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="assetTable"></tbody>
+        </table>
+      </div>
     </section>
 
     <section class="card section">
@@ -242,37 +381,233 @@
   </main>
 
   <script>
-    const STORAGE_KEY = "personal_asset_manager_v1";
+    const STORAGE_KEY = "personal_asset_manager_v2";
+    const FX_KEY = "personal_asset_manager_fx";
+    const ALPHA_KEY = "personal_asset_manager_alpha_key";
+
+    const currencies = ["TWD", "USD", "JPY", "EUR", "GBP", "AUD", "CAD", "NZD", "CHF", "HKD", "SGD", "CNY"];
 
     let items = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+
+    let fxRates = JSON.parse(localStorage.getItem(FX_KEY)) || {
+      TWD: 1,
+      USD: 31.5,
+      JPY: 0.21,
+      EUR: 34,
+      GBP: 39.5,
+      AUD: 20.5,
+      CAD: 23,
+      NZD: 19,
+      CHF: 35,
+      HKD: 4.05,
+      SGD: 23.5,
+      CNY: 4.35
+    };
 
     const form = document.getElementById("assetForm");
     const table = document.getElementById("assetTable");
     const singleLimitInput = document.getElementById("singleLimit");
+    const alphaKeyInput = document.getElementById("alphaKey");
 
-    function save() {
+    alphaKeyInput.value = localStorage.getItem(ALPHA_KEY) || "";
+
+    function saveItems() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
     }
 
-    function formatCurrency(value) {
-      return "NT$" + Number(value).toLocaleString("zh-TW");
+    function saveFxRates() {
+      localStorage.setItem(FX_KEY, JSON.stringify(fxRates));
     }
 
-    function getAmountForCalculation(item) {
-      if (item.category === "負債") {
-        return -Math.abs(Number(item.amount));
+    function saveAlphaKey() {
+      localStorage.setItem(ALPHA_KEY, alphaKeyInput.value.trim());
+      document.getElementById("stockStatus").textContent = "API Key 已儲存於本機瀏覽器。";
+    }
+
+    function formatCurrency(value) {
+      return "NT$" + Number(value || 0).toLocaleString("zh-TW", {
+        maximumFractionDigits: 0
+      });
+    }
+
+    function formatNumber(value, digits = 2) {
+      if (value === "" || value === null || value === undefined || Number.isNaN(Number(value))) return "";
+      return Number(value).toLocaleString("zh-TW", {
+        maximumFractionDigits: digits
+      });
+    }
+
+    function getOriginalAmount(item) {
+      const quantity = Number(item.quantity || 0);
+      const price = Number(item.price || 0);
+      const amount = Number(item.amount || 0);
+
+      if (quantity > 0 && price > 0) {
+        return quantity * price;
       }
-      return Number(item.amount);
+
+      return amount;
+    }
+
+    function getTwdValue(item) {
+      const originalAmount = getOriginalAmount(item);
+      const rate = Number(fxRates[item.currency] || 1);
+      const twdValue = originalAmount * rate;
+
+      if (item.category === "負債") {
+        return -Math.abs(twdValue);
+      }
+
+      return twdValue;
+    }
+
+    function isMarketAsset(item) {
+      return ["台股", "美股", "ETF"].includes(item.category);
+    }
+
+    function isLikelyUsTicker(item) {
+      if (!item.symbol) return false;
+
+      const symbol = item.symbol.trim().toUpperCase();
+
+      if (item.category === "美股") return true;
+
+      if (item.category === "ETF" && /^[A-Z.]+$/.test(symbol)) {
+        return true;
+      }
+
+      return false;
+    }
+
+    function renderFxTable() {
+      const fxTable = document.getElementById("fxTable");
+
+      fxTable.innerHTML = currencies.map(currency => `
+        <tr>
+          <td><strong>${currency}</strong></td>
+          <td>
+            <input
+              type="number"
+              step="0.0001"
+              value="${fxRates[currency] || ""}"
+              ${currency === "TWD" ? "disabled" : ""}
+              onchange="updateFxRate('${currency}', this.value)"
+            />
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    function updateFxRate(currency, value) {
+      fxRates[currency] = Number(value);
+      saveFxRates();
+      render();
+    }
+
+    async function fetchExchangeRates() {
+      const status = document.getElementById("fxStatus");
+      status.textContent = "更新匯率中...";
+
+      let successCount = 0;
+      let failCount = 0;
+
+      fxRates.TWD = 1;
+
+      for (const currency of currencies) {
+        if (currency === "TWD") continue;
+
+        try {
+          const url = `https://api.frankfurter.dev/v2/rate/${currency}/TWD`;
+          const response = await fetch(url);
+
+          if (!response.ok) {
+            throw new Error("匯率 API 回應失敗");
+          }
+
+          const data = await response.json();
+
+          if (data && data.rate) {
+            fxRates[currency] = Number(data.rate);
+            successCount += 1;
+          } else {
+            failCount += 1;
+          }
+        } catch (error) {
+          failCount += 1;
+        }
+      }
+
+      saveFxRates();
+      renderFxTable();
+      render();
+
+      status.textContent = `匯率更新完成：成功 ${successCount} 個，失敗 ${failCount} 個。`;
+    }
+
+    async function updateUsStockPrices() {
+      const apiKey = alphaKeyInput.value.trim() || localStorage.getItem(ALPHA_KEY);
+      const status = document.getElementById("stockStatus");
+
+      if (!apiKey) {
+        status.textContent = "請先輸入並儲存 Alpha Vantage API Key。";
+        return;
+      }
+
+      const targets = items.filter(isLikelyUsTicker);
+
+      if (targets.length === 0) {
+        status.textContent = "沒有找到可更新的美股或美股 ETF。";
+        return;
+      }
+
+      status.textContent = `更新中，共 ${targets.length} 個標的...`;
+
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const item of targets) {
+        try {
+          const symbol = item.symbol.trim().toUpperCase();
+          const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(apiKey)}`;
+          const response = await fetch(url);
+
+          if (!response.ok) {
+            throw new Error("股價 API 回應失敗");
+          }
+
+          const data = await response.json();
+          const quote = data["Global Quote"];
+          const price = quote ? Number(quote["05. price"]) : 0;
+
+          if (price > 0) {
+            item.price = price;
+            item.currency = "USD";
+            item.updatedAt = new Date().toISOString();
+            successCount += 1;
+          } else {
+            failCount += 1;
+          }
+        } catch (error) {
+          failCount += 1;
+        }
+      }
+
+      saveItems();
+      render();
+
+      status.textContent = `美股 / 美股 ETF 更新完成：成功 ${successCount} 個，失敗 ${failCount} 個。`;
     }
 
     function render() {
+      renderFxTable();
+
       const totalAssets = items
         .filter(item => item.category !== "負債")
-        .reduce((sum, item) => sum + Number(item.amount), 0);
+        .reduce((sum, item) => sum + Math.max(getTwdValue(item), 0), 0);
 
       const totalDebt = items
         .filter(item => item.category === "負債")
-        .reduce((sum, item) => sum + Math.abs(Number(item.amount)), 0);
+        .reduce((sum, item) => sum + Math.abs(getTwdValue(item)), 0);
 
       const netWorth = totalAssets - totalDebt;
 
@@ -287,9 +622,11 @@
       table.innerHTML = "";
 
       items.forEach((item, index) => {
-        const amount = Number(item.amount);
+        const originalAmount = getOriginalAmount(item);
+        const twdValue = getTwdValue(item);
+
         const ratio = totalAssets > 0 && item.category !== "負債"
-          ? amount / totalAssets * 100
+          ? Math.max(twdValue, 0) / totalAssets * 100
           : 0;
 
         if (ratio > maxRatio) maxRatio = ratio;
@@ -297,21 +634,30 @@
         const isOverLimit = item.category !== "負債" && ratio > singleLimit;
 
         const row = document.createElement("tr");
+
         row.innerHTML = `
-          <td>${item.category}</td>
+          <td><span class="pill">${item.category}</span></td>
           <td class="${isOverLimit ? "warning" : ""}">${item.name}</td>
-          <td>${formatCurrency(item.category === "負債" ? -Math.abs(amount) : amount)}</td>
+          <td>${item.symbol || ""}</td>
+          <td>${item.currency}</td>
+          <td>${formatNumber(item.quantity, 4)}</td>
+          <td>${formatNumber(item.price, 4)}</td>
+          <td>${formatNumber(item.category === "負債" ? -Math.abs(originalAmount) : originalAmount, 2)}</td>
+          <td>${formatCurrency(twdValue)}</td>
           <td>${ratio.toFixed(1)}%</td>
           <td>${item.note || ""}</td>
-          <td><button class="danger" onclick="removeItem(${index})">刪除</button></td>
+          <td>
+            <button class="danger small-button" onclick="removeItem(${index})">刪除</button>
+          </td>
         `;
+
         table.appendChild(row);
       });
 
       document.getElementById("maxHoldingRatio").textContent = maxRatio.toFixed(1) + "%";
 
       renderAllocation(totalAssets);
-      renderSuggestions(totalAssets, singleLimit);
+      renderSuggestions(totalAssets, totalDebt, singleLimit);
     }
 
     function renderAllocation(totalAssets) {
@@ -320,7 +666,8 @@
       items
         .filter(item => item.category !== "負債")
         .forEach(item => {
-          allocation[item.category] = (allocation[item.category] || 0) + Number(item.amount);
+          const value = Math.max(getTwdValue(item), 0);
+          allocation[item.category] = (allocation[item.category] || 0) + value;
         });
 
       const container = document.getElementById("allocation");
@@ -331,6 +678,7 @@
       }
 
       container.innerHTML = Object.entries(allocation)
+        .sort((a, b) => b[1] - a[1])
         .map(([category, amount]) => {
           const ratio = amount / totalAssets * 100;
           return `<p><strong>${category}</strong>：${formatCurrency(amount)}，${ratio.toFixed(1)}%</p>`;
@@ -338,7 +686,7 @@
         .join("");
     }
 
-    function renderSuggestions(totalAssets, singleLimit) {
+    function renderSuggestions(totalAssets, totalDebt, singleLimit) {
       const suggestions = [];
 
       if (items.length === 0) {
@@ -347,14 +695,15 @@
 
       const cash = items
         .filter(item => item.category === "現金")
-        .reduce((sum, item) => sum + Number(item.amount), 0);
+        .reduce((sum, item) => sum + Math.max(getTwdValue(item), 0), 0);
 
       const stockLike = items
         .filter(item => ["台股", "美股", "ETF", "基金"].includes(item.category))
-        .reduce((sum, item) => sum + Number(item.amount), 0);
+        .reduce((sum, item) => sum + Math.max(getTwdValue(item), 0), 0);
 
       const cashRatio = totalAssets > 0 ? cash / totalAssets * 100 : 0;
       const stockRatio = totalAssets > 0 ? stockLike / totalAssets * 100 : 0;
+      const debtRatio = totalAssets > 0 ? totalDebt / totalAssets * 100 : 0;
 
       if (totalAssets > 0 && cashRatio < 10) {
         suggestions.push("現金比重低於 10%，若近期有大額支出或市場波動，建議提高流動性部位。");
@@ -364,10 +713,15 @@
         suggestions.push("股票、ETF、基金合計比重超過 80%，整體投資部位偏高，建議確認風險承受度。");
       }
 
+      if (debtRatio > 50) {
+        suggestions.push(`負債約為總資產的 ${debtRatio.toFixed(1)}%，建議持續追蹤槓桿與現金流壓力。`);
+      }
+
       items.forEach(item => {
         if (item.category === "負債") return;
 
-        const ratio = totalAssets > 0 ? Number(item.amount) / totalAssets * 100 : 0;
+        const twdValue = Math.max(getTwdValue(item), 0);
+        const ratio = totalAssets > 0 ? twdValue / totalAssets * 100 : 0;
 
         if (ratio > singleLimit) {
           suggestions.push(`${item.name} 占總資產 ${ratio.toFixed(1)}%，已超過單一標的上限 ${singleLimit}%。`);
@@ -385,7 +739,7 @@
 
     function removeItem(index) {
       items.splice(index, 1);
-      save();
+      saveItems();
       render();
     }
 
@@ -394,14 +748,37 @@
 
       const category = document.getElementById("category").value;
       const name = document.getElementById("name").value.trim();
-      const amount = Number(document.getElementById("amount").value);
+      const symbol = document.getElementById("symbol").value.trim().toUpperCase();
+      const currency = document.getElementById("currency").value;
+      const quantity = Number(document.getElementById("quantity").value || 0);
+      const price = Number(document.getElementById("price").value || 0);
+      const amount = Number(document.getElementById("amount").value || 0);
       const note = document.getElementById("note").value.trim();
 
-      if (!name || !amount) return;
+      const calculatedAmount = quantity > 0 && price > 0
+        ? quantity * price
+        : amount;
 
-      items.push({ category, name, amount, note });
-      save();
+      if (!name || calculatedAmount === 0) {
+        alert("請至少輸入名稱，並填入股數＋現價，或直接填入金額。");
+        return;
+      }
+
+      items.push({
+        category,
+        name,
+        symbol,
+        currency,
+        quantity,
+        price,
+        amount: calculatedAmount,
+        note,
+        updatedAt: new Date().toISOString()
+      });
+
+      saveItems();
       form.reset();
+      document.getElementById("currency").value = "TWD";
       render();
     });
 
