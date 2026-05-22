@@ -63,7 +63,12 @@
 
     form {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 16px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 12px;
       align-items: end;
     }
@@ -224,13 +229,36 @@
       color: #b91c1c;
       font-weight: 700;
     }
+
+    .hidden {
+      display: none;
+    }
+
+    .dynamic-group {
+      padding: 14px;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      background: #f8fafc;
+    }
+
+    .dynamic-group-title {
+      font-weight: 700;
+      color: #334155;
+      margin-bottom: 10px;
+    }
+
+    .loan-preview {
+      margin-top: 8px;
+      color: #475569;
+      font-size: 14px;
+    }
   </style>
 </head>
 
 <body>
   <header>
     <h1>個人資產管理 Dashboard</h1>
-    <p>追蹤多幣別資產、股票 / ETF 股數、負債、匯率與持股曝險</p>
+    <p>追蹤多幣別資產、股票 / ETF 股數、貸款、匯率與持股曝險</p>
   </header>
 
   <main>
@@ -257,80 +285,128 @@
     </section>
 
     <section class="card section">
-      <h2>新增資產 / 負債</h2>
+      <h2>智慧新增資產 / 負債</h2>
 
       <form id="assetForm">
-        <div>
-          <label>類別</label>
-          <select id="category" required>
-            <option value="現金">現金</option>
-            <option value="台股">台股</option>
-            <option value="美股">美股</option>
-            <option value="ETF">ETF</option>
-            <option value="基金">基金</option>
-            <option value="保險">保險</option>
-            <option value="不動產">不動產</option>
-            <option value="負債">負債</option>
-            <option value="其他">其他</option>
-          </select>
+        <div class="form-grid">
+          <div>
+            <label>類別</label>
+            <select id="category" required>
+              <option value="現金">現金</option>
+              <option value="台股">台股</option>
+              <option value="美股">美股</option>
+              <option value="ETF">ETF</option>
+              <option value="基金">基金</option>
+              <option value="保險">保險</option>
+              <option value="不動產">不動產</option>
+              <option value="貸款">貸款</option>
+              <option value="信用卡負債">信用卡負債</option>
+              <option value="其他">其他</option>
+            </select>
+          </div>
+
+          <div>
+            <label>名稱</label>
+            <input id="name" placeholder="例如：0050、VT、台幣帳戶、房貸" required />
+          </div>
+
+          <div>
+            <label>幣別</label>
+            <select id="currency" required>
+              <option value="TWD">TWD 新台幣</option>
+              <option value="USD">USD 美元</option>
+              <option value="JPY">JPY 日圓</option>
+              <option value="EUR">EUR 歐元</option>
+              <option value="GBP">GBP 英鎊</option>
+              <option value="AUD">AUD 澳幣</option>
+              <option value="CAD">CAD 加幣</option>
+              <option value="NZD">NZD 紐幣</option>
+              <option value="CHF">CHF 瑞郎</option>
+              <option value="HKD">HKD 港幣</option>
+              <option value="SGD">SGD 新幣</option>
+              <option value="CNY">CNY 人民幣</option>
+            </select>
+          </div>
         </div>
 
-        <div>
-          <label>名稱</label>
-          <input id="name" placeholder="例如：0050、VT、現金帳戶、房貸" required />
+        <div id="simpleAmountFields" class="dynamic-group">
+          <div class="dynamic-group-title">一般資產 / 負債資料</div>
+
+          <div class="form-grid">
+            <div>
+              <label id="amountLabel">金額</label>
+              <input id="amount" type="number" step="0.01" placeholder="例如：500000" />
+            </div>
+          </div>
         </div>
 
-        <div>
-          <label>代號</label>
-          <input id="symbol" placeholder="例如：0050、AAPL、VT，可選填" />
+        <div id="marketFields" class="dynamic-group hidden">
+          <div class="dynamic-group-title">股票 / ETF 資料</div>
+
+          <div class="form-grid">
+            <div>
+              <label>代號</label>
+              <input id="symbol" placeholder="例如：0050、AAPL、VT" />
+            </div>
+
+            <div>
+              <label>股數 / 單位數</label>
+              <input id="quantity" type="number" step="0.0001" placeholder="例如：1000" />
+            </div>
+
+            <div>
+              <label>現價</label>
+              <input id="price" type="number" step="0.0001" placeholder="例如：180" />
+            </div>
+          </div>
+
+          <p class="muted">
+            股票 / ETF 會用「股數 × 現價」自動計算原幣金額。美股與美股 ETF 可用下方 API 更新現價；台股目前先手動輸入現價。
+          </p>
         </div>
 
-        <div>
-          <label>幣別</label>
-          <select id="currency" required>
-            <option value="TWD">TWD 新台幣</option>
-            <option value="USD">USD 美元</option>
-            <option value="JPY">JPY 日圓</option>
-            <option value="EUR">EUR 歐元</option>
-            <option value="GBP">GBP 英鎊</option>
-            <option value="AUD">AUD 澳幣</option>
-            <option value="CAD">CAD 加幣</option>
-            <option value="NZD">NZD 紐幣</option>
-            <option value="CHF">CHF 瑞郎</option>
-            <option value="HKD">HKD 港幣</option>
-            <option value="SGD">SGD 新幣</option>
-            <option value="CNY">CNY 人民幣</option>
-          </select>
+        <div id="loanFields" class="dynamic-group hidden">
+          <div class="dynamic-group-title">貸款資料</div>
+
+          <div class="form-grid">
+            <div>
+              <label>目前本金</label>
+              <input id="loanPrincipal" type="number" step="0.01" placeholder="例如：8000000" />
+            </div>
+
+            <div>
+              <label>剩餘年限</label>
+              <input id="loanYears" type="number" step="0.1" placeholder="例如：25" />
+            </div>
+
+            <div>
+              <label>年利率（%）</label>
+              <input id="loanRate" type="number" step="0.001" placeholder="例如：2.1" />
+            </div>
+          </div>
+
+          <div id="loanPreview" class="loan-preview"></div>
+
+          <p class="muted">
+            目前以「本息平均攤還」粗估每月付款。實際金額仍需以銀行試算與合約為準。
+          </p>
         </div>
 
-        <div>
-          <label>股數 / 單位數</label>
-          <input id="quantity" type="number" step="0.0001" placeholder="股票 / ETF 使用" />
-        </div>
+        <div class="form-grid">
+          <div>
+            <label>備註</label>
+            <input id="note" placeholder="選填" />
+          </div>
 
-        <div>
-          <label>現價</label>
-          <input id="price" type="number" step="0.0001" placeholder="股票 / ETF 使用" />
-        </div>
-
-        <div>
-          <label>金額</label>
-          <input id="amount" type="number" step="0.01" placeholder="非股票資產使用" />
-        </div>
-
-        <div>
-          <label>備註</label>
-          <input id="note" placeholder="選填" />
-        </div>
-
-        <div>
-          <button type="submit">新增</button>
+          <div>
+            <button type="submit">新增</button>
+          </div>
         </div>
       </form>
 
       <div class="hint-box">
-        <p class="muted">
-          股票 / ETF 若填入「股數」與「現價」，系統會自動用股數 × 現價計算金額；其他資產可直接填「金額」。
+        <p class="muted" id="categoryHint">
+          選擇不同類別後，系統會自動切換需要輸入的欄位。
         </p>
       </div>
     </section>
@@ -422,6 +498,7 @@
               <th>原幣金額</th>
               <th>TWD 估值</th>
               <th>比重</th>
+              <th>貸款條件</th>
               <th>備註</th>
               <th>操作</th>
             </tr>
@@ -444,11 +521,14 @@
   </main>
 
   <script>
-    const STORAGE_KEY = "personal_asset_manager_v3";
+    const STORAGE_KEY = "personal_asset_manager_v4";
     const FX_KEY = "personal_asset_manager_fx";
     const FX_UPDATED_AT_KEY = "personal_asset_manager_fx_updated_at";
     const FX_RATE_DATE_KEY = "personal_asset_manager_fx_rate_date";
     const ALPHA_KEY = "personal_asset_manager_alpha_key";
+
+    const marketCategories = ["台股", "美股", "ETF"];
+    const debtCategories = ["貸款", "信用卡負債", "負債"];
 
     const currencies = [
       "TWD",
@@ -483,9 +563,18 @@
     };
 
     const form = document.getElementById("assetForm");
+    const categoryInput = document.getElementById("category");
+    const currencyInput = document.getElementById("currency");
     const table = document.getElementById("assetTable");
     const singleLimitInput = document.getElementById("singleLimit");
     const alphaKeyInput = document.getElementById("alphaKey");
+
+    const simpleAmountFields = document.getElementById("simpleAmountFields");
+    const marketFields = document.getElementById("marketFields");
+    const loanFields = document.getElementById("loanFields");
+    const amountLabel = document.getElementById("amountLabel");
+    const categoryHint = document.getElementById("categoryHint");
+    const loanPreview = document.getElementById("loanPreview");
 
     alphaKeyInput.value = localStorage.getItem(ALPHA_KEY) || "";
 
@@ -500,6 +589,15 @@
     function saveAlphaKey() {
       localStorage.setItem(ALPHA_KEY, alphaKeyInput.value.trim());
       document.getElementById("stockStatus").textContent = "API Key 已儲存於本機瀏覽器。";
+    }
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
     }
 
     function formatCurrency(value) {
@@ -524,16 +622,48 @@
       });
     }
 
-    function getOriginalAmount(item) {
-      const quantity = Number(item.quantity || 0);
-      const price = Number(item.price || 0);
-      const amount = Number(item.amount || 0);
+    function isDebt(item) {
+      return debtCategories.includes(item.category);
+    }
 
-      if (quantity > 0 && price > 0) {
-        return quantity * price;
+    function isMarketAsset(item) {
+      return marketCategories.includes(item.category);
+    }
+
+    function calculateMonthlyPayment(principal, annualRate, years) {
+      const p = Number(principal || 0);
+      const annual = Number(annualRate || 0);
+      const y = Number(years || 0);
+
+      if (p <= 0 || y <= 0) return 0;
+
+      const months = y * 12;
+
+      if (annual <= 0) {
+        return p / months;
       }
 
-      return amount;
+      const monthlyRate = annual / 100 / 12;
+      const factor = Math.pow(1 + monthlyRate, months);
+
+      return p * monthlyRate * factor / (factor - 1);
+    }
+
+    function getOriginalAmount(item) {
+      if (isMarketAsset(item)) {
+        const quantity = Number(item.quantity || 0);
+        const price = Number(item.price || 0);
+
+        if (quantity > 0 && price > 0) {
+          return quantity * price;
+        }
+      }
+
+      if (item.category === "貸款") {
+        return Number(item.loanPrincipal || item.amount || 0);
+      }
+
+      return Number(item.amount || 0);
     }
 
     function getTwdValue(item) {
@@ -541,7 +671,7 @@
       const rate = Number(fxRates[item.currency] || 1);
       const twdValue = originalAmount * rate;
 
-      if (item.category === "負債") {
+      if (isDebt(item)) {
         return -Math.abs(twdValue);
       }
 
@@ -560,6 +690,58 @@
       }
 
       return false;
+    }
+
+    function renderCategoryFields() {
+      const category = categoryInput.value;
+
+      const isMarket = marketCategories.includes(category);
+      const isLoan = category === "貸款";
+      const isCreditDebt = category === "信用卡負債";
+
+      marketFields.classList.toggle("hidden", !isMarket);
+      loanFields.classList.toggle("hidden", !isLoan);
+      simpleAmountFields.classList.toggle("hidden", isMarket || isLoan);
+
+      if (category === "台股") {
+        currencyInput.value = "TWD";
+        categoryHint.textContent = "台股請輸入股票代號、股數與目前股價；系統會自動計算持股市值。";
+      } else if (category === "美股") {
+        currencyInput.value = "USD";
+        categoryHint.textContent = "美股請輸入 ticker、股數與目前股價；若有 Alpha Vantage API Key，可自動更新現價。";
+      } else if (category === "ETF") {
+        categoryHint.textContent = "ETF 可為台股 ETF 或美股 ETF。若是美股 ETF，幣別通常選 USD，代號例如 VT、VOO、QQQ。";
+      } else if (isLoan) {
+        currencyInput.value = "TWD";
+        categoryHint.textContent = "貸款請輸入目前本金、剩餘年限與年利率，系統會估算每月本息與負債金額。";
+      } else if (isCreditDebt) {
+        amountLabel.textContent = "目前應繳 / 未清償金額";
+        categoryHint.textContent = "信用卡負債請輸入目前未清償金額。系統會將其列入總負債。";
+      } else {
+        amountLabel.textContent = "金額";
+        categoryHint.textContent = "一般資產請直接輸入目前估計金額。";
+      }
+
+      updateLoanPreview();
+    }
+
+    function updateLoanPreview() {
+      const principal = Number(document.getElementById("loanPrincipal").value || 0);
+      const years = Number(document.getElementById("loanYears").value || 0);
+      const rate = Number(document.getElementById("loanRate").value || 0);
+      const currency = currencyInput.value;
+
+      if (categoryInput.value !== "貸款") {
+        loanPreview.textContent = "";
+        return;
+      }
+
+      if (principal > 0 && years > 0) {
+        const monthlyPayment = calculateMonthlyPayment(principal, rate, years);
+        loanPreview.textContent = `粗估每月本息：約 ${formatOriginalCurrency(monthlyPayment, currency)} / 月`;
+      } else {
+        loanPreview.textContent = "輸入目前本金與剩餘年限後，會自動估算每月本息。";
+      }
     }
 
     function renderFxTable() {
@@ -702,6 +884,23 @@
       status.textContent = `美股 / 美股 ETF 更新完成：成功 ${successCount} 個，失敗 ${failCount} 個。`;
     }
 
+    function formatLoanDetails(item) {
+      if (item.category !== "貸款") return "";
+
+      const years = Number(item.loanYears || 0);
+      const rate = Number(item.loanRate || 0);
+      const principal = Number(item.loanPrincipal || item.amount || 0);
+      const monthlyPayment = calculateMonthlyPayment(principal, rate, years);
+
+      const rows = [];
+
+      if (years > 0) rows.push(`剩餘 ${formatNumber(years, 1)} 年`);
+      if (rate >= 0) rows.push(`年利率 ${formatNumber(rate, 3)}%`);
+      if (monthlyPayment > 0) rows.push(`月付約 ${formatOriginalCurrency(monthlyPayment, item.currency)}`);
+
+      return rows.map(escapeHtml).join("<br>");
+    }
+
     function render() {
       renderFxTable();
 
@@ -720,11 +919,11 @@
       }
 
       const totalAssets = items
-        .filter(item => item.category !== "負債")
+        .filter(item => !isDebt(item))
         .reduce((sum, item) => sum + Math.max(getTwdValue(item), 0), 0);
 
       const totalDebt = items
-        .filter(item => item.category === "負債")
+        .filter(item => isDebt(item))
         .reduce((sum, item) => sum + Math.abs(getTwdValue(item)), 0);
 
       const netWorth = totalAssets - totalDebt;
@@ -743,7 +942,7 @@
         const originalAmount = getOriginalAmount(item);
         const twdValue = getTwdValue(item);
 
-        const ratio = totalAssets > 0 && item.category !== "負債"
+        const ratio = totalAssets > 0 && !isDebt(item)
           ? Math.max(twdValue, 0) / totalAssets * 100
           : 0;
 
@@ -751,23 +950,23 @@
           maxRatio = ratio;
         }
 
-        const isOverLimit = item.category !== "負債" && ratio > singleLimit;
-
+        const isOverLimit = !isDebt(item) && ratio > singleLimit;
         const twdValueClass = twdValue < 0 ? "negative" : "positive";
 
         const row = document.createElement("tr");
 
         row.innerHTML = `
-          <td><span class="pill">${item.category}</span></td>
-          <td class="${isOverLimit ? "warning" : ""}">${item.name}</td>
-          <td>${item.symbol || ""}</td>
-          <td>${item.currency}</td>
-          <td>${formatNumber(item.quantity, 4)}</td>
-          <td>${formatNumber(item.price, 4)}</td>
-          <td>${formatOriginalCurrency(item.category === "負債" ? -Math.abs(originalAmount) : originalAmount, item.currency)}</td>
+          <td><span class="pill">${escapeHtml(item.category)}</span></td>
+          <td class="${isOverLimit ? "warning" : ""}">${escapeHtml(item.name)}</td>
+          <td>${escapeHtml(item.symbol || "")}</td>
+          <td>${escapeHtml(item.currency)}</td>
+          <td>${isMarketAsset(item) ? formatNumber(item.quantity, 4) : ""}</td>
+          <td>${isMarketAsset(item) ? formatNumber(item.price, 4) : ""}</td>
+          <td>${formatOriginalCurrency(isDebt(item) ? -Math.abs(originalAmount) : originalAmount, item.currency)}</td>
           <td class="${twdValueClass}">${formatCurrency(twdValue)}</td>
           <td>${ratio.toFixed(1)}%</td>
-          <td>${item.note || ""}</td>
+          <td>${formatLoanDetails(item)}</td>
+          <td>${escapeHtml(item.note || "")}</td>
           <td>
             <button class="danger small-button" onclick="removeItem(${index})">刪除</button>
           </td>
@@ -786,7 +985,7 @@
       const allocation = {};
 
       items
-        .filter(item => item.category !== "負債")
+        .filter(item => !isDebt(item))
         .forEach(item => {
           const value = Math.max(getTwdValue(item), 0);
           allocation[item.category] = (allocation[item.category] || 0) + value;
@@ -803,7 +1002,7 @@
         .sort((a, b) => b[1] - a[1])
         .map(([category, amount]) => {
           const ratio = amount / totalAssets * 100;
-          return `<p><strong>${category}</strong>：${formatCurrency(amount)}，${ratio.toFixed(1)}%</p>`;
+          return `<p><strong>${escapeHtml(category)}</strong>：${formatCurrency(amount)}，${ratio.toFixed(1)}%</p>`;
         })
         .join("");
     }
@@ -840,7 +1039,7 @@
       }
 
       items.forEach(item => {
-        if (item.category === "負債") return;
+        if (isDebt(item)) return;
 
         const twdValue = Math.max(getTwdValue(item), 0);
         const ratio = totalAssets > 0 ? twdValue / totalAssets * 100 : 0;
@@ -855,7 +1054,7 @@
       }
 
       document.getElementById("suggestions").innerHTML = suggestions
-        .map(text => `<p>${text}</p>`)
+        .map(text => `<p>${escapeHtml(text)}</p>`)
         .join("");
     }
 
@@ -870,44 +1069,100 @@
 
       const category = document.getElementById("category").value;
       const name = document.getElementById("name").value.trim();
-      const symbol = document.getElementById("symbol").value.trim().toUpperCase();
       const currency = document.getElementById("currency").value;
+      const note = document.getElementById("note").value.trim();
+
+      const symbol = document.getElementById("symbol").value.trim().toUpperCase();
       const quantity = Number(document.getElementById("quantity").value || 0);
       const price = Number(document.getElementById("price").value || 0);
       const amount = Number(document.getElementById("amount").value || 0);
-      const note = document.getElementById("note").value.trim();
 
-      const calculatedAmount = quantity > 0 && price > 0
-        ? quantity * price
-        : amount;
+      const loanPrincipal = Number(document.getElementById("loanPrincipal").value || 0);
+      const loanYears = Number(document.getElementById("loanYears").value || 0);
+      const loanRate = Number(document.getElementById("loanRate").value || 0);
 
-      if (!name || calculatedAmount === 0) {
-        alert("請至少輸入名稱，並填入股數＋現價，或直接填入金額。");
+      if (!name) {
+        alert("請輸入名稱。");
         return;
       }
 
-      items.push({
-        category,
-        name,
-        symbol,
-        currency,
-        quantity,
-        price,
-        amount: calculatedAmount,
-        note,
-        updatedAt: new Date().toISOString()
-      });
+      if (marketCategories.includes(category)) {
+        if (quantity <= 0 || price <= 0) {
+          alert("股票 / ETF 請輸入股數與現價。");
+          return;
+        }
+
+        items.push({
+          category,
+          name,
+          symbol: symbol || name.toUpperCase(),
+          currency,
+          quantity,
+          price,
+          amount: quantity * price,
+          note,
+          updatedAt: new Date().toISOString()
+        });
+      } else if (category === "貸款") {
+        if (loanPrincipal <= 0 || loanYears <= 0) {
+          alert("貸款請輸入目前本金與剩餘年限。");
+          return;
+        }
+
+        const monthlyPayment = calculateMonthlyPayment(loanPrincipal, loanRate, loanYears);
+
+        items.push({
+          category,
+          name,
+          symbol: "",
+          currency,
+          quantity: 0,
+          price: 0,
+          amount: loanPrincipal,
+          loanPrincipal,
+          loanYears,
+          loanRate,
+          monthlyPayment,
+          note,
+          updatedAt: new Date().toISOString()
+        });
+      } else {
+        if (amount <= 0) {
+          alert("請輸入金額。");
+          return;
+        }
+
+        items.push({
+          category,
+          name,
+          symbol: "",
+          currency,
+          quantity: 0,
+          price: 0,
+          amount,
+          note,
+          updatedAt: new Date().toISOString()
+        });
+      }
 
       saveItems();
 
       form.reset();
       document.getElementById("currency").value = "TWD";
-
+      renderCategoryFields();
       render();
+    });
+
+    categoryInput.addEventListener("change", renderCategoryFields);
+    currencyInput.addEventListener("change", updateLoanPreview);
+
+    ["loanPrincipal", "loanYears", "loanRate"].forEach(id => {
+      document.getElementById(id).addEventListener("input", updateLoanPreview);
     });
 
     singleLimitInput.addEventListener("input", render);
 
+    renderCategoryFields();
     render();
   </script>
 </body>
