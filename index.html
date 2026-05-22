@@ -1,1 +1,413 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>個人資產管理 Dashboard</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0;
+    background: #f4f5f7;
+    color: #374151;
+  }
 
+  header {
+    background: #334155;
+    color: #f8fafc;
+    padding: 24px;
+  }
+
+  header p {
+    color: #e2e8f0;
+  }
+
+  main {
+    max-width: 1100px;
+    margin: 24px auto;
+    padding: 0 16px;
+  }
+
+  h1, h2 {
+    margin-top: 0;
+    color: #334155;
+  }
+
+  header h1 {
+    color: #f8fafc;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .card {
+    background: #ffffff;
+    padding: 20px;
+    border-radius: 16px;
+    box-shadow: 0 2px 10px rgba(15, 23, 42, 0.06);
+    border: 1px solid #e5e7eb;
+  }
+
+  .value {
+    font-size: 28px;
+    font-weight: 700;
+    margin-top: 8px;
+    color: #475569;
+  }
+
+  form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    align-items: end;
+  }
+
+  label {
+    font-size: 14px;
+    font-weight: 600;
+    color: #475569;
+  }
+
+  input, select, button {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid #cbd5e1;
+    font-size: 15px;
+  }
+
+  input, select {
+    background: #ffffff;
+    color: #374151;
+  }
+
+  button {
+    background: #64748b;
+    color: white;
+    border: none;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  button:hover {
+    background: #475569;
+  }
+
+  .danger {
+    background: #b91c1c;
+  }
+
+  .danger:hover {
+    background: #991b1b;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  th, td {
+    padding: 12px;
+    border-bottom: 1px solid #e5e7eb;
+    text-align: left;
+  }
+
+  th {
+    background: #f1f5f9;
+    color: #475569;
+  }
+
+  .warning {
+    color: #b91c1c;
+    font-weight: 700;
+  }
+
+  .muted {
+    color: #64748b;
+    font-size: 14px;
+  }
+
+  .section {
+    margin-bottom: 28px;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>個人資產管理 Dashboard</h1>
+    <p>追蹤資產、負債、持股曝險與再平衡提醒</p>
+  </header>
+
+  <main>
+    <section class="grid">
+      <div class="card">
+        <div>總資產</div>
+        <div class="value" id="totalAssets">NT$0</div>
+      </div>
+      <div class="card">
+        <div>總負債</div>
+        <div class="value" id="totalDebt">NT$0</div>
+      </div>
+      <div class="card">
+        <div>淨資產</div>
+        <div class="value" id="netWorth">NT$0</div>
+      </div>
+      <div class="card">
+        <div>單一標的最大比重</div>
+        <div class="value" id="maxHoldingRatio">0%</div>
+      </div>
+    </section>
+
+    <section class="card section">
+      <h2>新增資產 / 負債</h2>
+      <form id="assetForm">
+        <div>
+          <label>類別</label>
+          <select id="category" required>
+            <option value="現金">現金</option>
+            <option value="台股">台股</option>
+            <option value="美股">美股</option>
+            <option value="ETF">ETF</option>
+            <option value="基金">基金</option>
+            <option value="保險">保險</option>
+            <option value="不動產">不動產</option>
+            <option value="負債">負債</option>
+            <option value="其他">其他</option>
+          </select>
+        </div>
+
+        <div>
+          <label>名稱</label>
+          <input id="name" placeholder="例如：0050、NVDA、房貸" required />
+        </div>
+
+        <div>
+          <label>金額 TWD</label>
+          <input id="amount" type="number" placeholder="正數為資產，負債可填正數" required />
+        </div>
+
+        <div>
+          <label>備註</label>
+          <input id="note" placeholder="選填" />
+        </div>
+
+        <div>
+          <button type="submit">新增</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card section">
+      <h2>曝險規則</h2>
+      <label>單一標的上限（%）</label>
+      <input id="singleLimit" type="number" value="15" min="1" max="100" />
+      <p class="muted">若單一資產占總資產比例超過此數值，系統會顯示警示。</p>
+    </section>
+
+    <section class="card section">
+      <h2>資產清單</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>類別</th>
+            <th>名稱</th>
+            <th>金額</th>
+            <th>比重</th>
+            <th>備註</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="assetTable"></tbody>
+      </table>
+    </section>
+
+    <section class="card section">
+      <h2>資產配置</h2>
+      <div id="allocation"></div>
+    </section>
+
+    <section class="card section">
+      <h2>再平衡提醒</h2>
+      <div id="suggestions"></div>
+    </section>
+  </main>
+
+  <script>
+    const STORAGE_KEY = "personal_asset_manager_v1";
+
+    let items = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+
+    const form = document.getElementById("assetForm");
+    const table = document.getElementById("assetTable");
+    const singleLimitInput = document.getElementById("singleLimit");
+
+    function save() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    }
+
+    function formatCurrency(value) {
+      return "NT$" + Number(value).toLocaleString("zh-TW");
+    }
+
+    function getAmountForCalculation(item) {
+      if (item.category === "負債") {
+        return -Math.abs(Number(item.amount));
+      }
+      return Number(item.amount);
+    }
+
+    function render() {
+      const totalAssets = items
+        .filter(item => item.category !== "負債")
+        .reduce((sum, item) => sum + Number(item.amount), 0);
+
+      const totalDebt = items
+        .filter(item => item.category === "負債")
+        .reduce((sum, item) => sum + Math.abs(Number(item.amount)), 0);
+
+      const netWorth = totalAssets - totalDebt;
+
+      document.getElementById("totalAssets").textContent = formatCurrency(totalAssets);
+      document.getElementById("totalDebt").textContent = formatCurrency(totalDebt);
+      document.getElementById("netWorth").textContent = formatCurrency(netWorth);
+
+      const singleLimit = Number(singleLimitInput.value) || 15;
+
+      let maxRatio = 0;
+
+      table.innerHTML = "";
+
+      items.forEach((item, index) => {
+        const amount = Number(item.amount);
+        const ratio = totalAssets > 0 && item.category !== "負債"
+          ? amount / totalAssets * 100
+          : 0;
+
+        if (ratio > maxRatio) maxRatio = ratio;
+
+        const isOverLimit = item.category !== "負債" && ratio > singleLimit;
+
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${item.category}</td>
+          <td class="${isOverLimit ? "warning" : ""}">${item.name}</td>
+          <td>${formatCurrency(item.category === "負債" ? -Math.abs(amount) : amount)}</td>
+          <td>${ratio.toFixed(1)}%</td>
+          <td>${item.note || ""}</td>
+          <td><button class="danger" onclick="removeItem(${index})">刪除</button></td>
+        `;
+        table.appendChild(row);
+      });
+
+      document.getElementById("maxHoldingRatio").textContent = maxRatio.toFixed(1) + "%";
+
+      renderAllocation(totalAssets);
+      renderSuggestions(totalAssets, singleLimit);
+    }
+
+    function renderAllocation(totalAssets) {
+      const allocation = {};
+
+      items
+        .filter(item => item.category !== "負債")
+        .forEach(item => {
+          allocation[item.category] = (allocation[item.category] || 0) + Number(item.amount);
+        });
+
+      const container = document.getElementById("allocation");
+
+      if (totalAssets <= 0) {
+        container.innerHTML = "<p class='muted'>尚未新增資產。</p>";
+        return;
+      }
+
+      container.innerHTML = Object.entries(allocation)
+        .map(([category, amount]) => {
+          const ratio = amount / totalAssets * 100;
+          return `<p><strong>${category}</strong>：${formatCurrency(amount)}，${ratio.toFixed(1)}%</p>`;
+        })
+        .join("");
+    }
+
+    function renderSuggestions(totalAssets, singleLimit) {
+      const suggestions = [];
+
+      if (items.length === 0) {
+        suggestions.push("尚未新增資料。請先輸入資產與負債。");
+      }
+
+      const cash = items
+        .filter(item => item.category === "現金")
+        .reduce((sum, item) => sum + Number(item.amount), 0);
+
+      const stockLike = items
+        .filter(item => ["台股", "美股", "ETF", "基金"].includes(item.category))
+        .reduce((sum, item) => sum + Number(item.amount), 0);
+
+      const cashRatio = totalAssets > 0 ? cash / totalAssets * 100 : 0;
+      const stockRatio = totalAssets > 0 ? stockLike / totalAssets * 100 : 0;
+
+      if (totalAssets > 0 && cashRatio < 10) {
+        suggestions.push("現金比重低於 10%，若近期有大額支出或市場波動，建議提高流動性部位。");
+      }
+
+      if (stockRatio > 80) {
+        suggestions.push("股票、ETF、基金合計比重超過 80%，整體投資部位偏高，建議確認風險承受度。");
+      }
+
+      items.forEach(item => {
+        if (item.category === "負債") return;
+
+        const ratio = totalAssets > 0 ? Number(item.amount) / totalAssets * 100 : 0;
+
+        if (ratio > singleLimit) {
+          suggestions.push(`${item.name} 占總資產 ${ratio.toFixed(1)}%，已超過單一標的上限 ${singleLimit}%。`);
+        }
+      });
+
+      if (suggestions.length === 0) {
+        suggestions.push("目前沒有明顯超標項目。");
+      }
+
+      document.getElementById("suggestions").innerHTML = suggestions
+        .map(text => `<p>${text}</p>`)
+        .join("");
+    }
+
+    function removeItem(index) {
+      items.splice(index, 1);
+      save();
+      render();
+    }
+
+    form.addEventListener("submit", event => {
+      event.preventDefault();
+
+      const category = document.getElementById("category").value;
+      const name = document.getElementById("name").value.trim();
+      const amount = Number(document.getElementById("amount").value);
+      const note = document.getElementById("note").value.trim();
+
+      if (!name || !amount) return;
+
+      items.push({ category, name, amount, note });
+      save();
+      form.reset();
+      render();
+    });
+
+    singleLimitInput.addEventListener("input", render);
+
+    render();
+  </script>
+</body>
+</html>
