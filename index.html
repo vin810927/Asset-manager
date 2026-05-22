@@ -142,9 +142,10 @@
     }
 
     .small-button {
-      padding: 6px 10px;
-      font-size: 13px;
+      padding: 5px 8px;
+      font-size: 12px;
       border-radius: 8px;
+      width: auto;
     }
 
     .dynamic-group {
@@ -166,7 +167,7 @@
       border: 1px solid #e2e8f0;
       border-radius: 12px;
       padding: 8px 10px;
-      margin-top: 8px;
+      margin-top: 0;
     }
 
     .muted {
@@ -236,7 +237,7 @@
     }
 
     .asset-table-card .table-wrap {
-      max-height: 360px;
+      max-height: 380px;
       overflow: auto;
       border: 1px solid #e5e7eb;
       border-radius: 12px;
@@ -307,6 +308,36 @@
       gap: 12px;
     }
 
+    .detail-box {
+      min-width: 260px;
+    }
+
+    .detail-row {
+      padding: 6px 0;
+      border-bottom: 1px solid #e5e7eb;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .detail-row:last-child {
+      border-bottom: none;
+    }
+
+    .detail-meta {
+      color: #64748b;
+    }
+
+    .detail-actions {
+      margin-top: 4px;
+    }
+
+    details.asset-detail summary {
+      cursor: pointer;
+      color: #475569;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
     @media (max-width: 900px) {
       .compact-two {
         grid-template-columns: 1fr;
@@ -366,8 +397,8 @@
           </div>
 
           <div>
-            <label>名稱</label>
-            <input id="name" placeholder="例如：0050、VT、台幣帳戶、房貸" required />
+            <label id="itemLabel">項目 / 代號</label>
+            <input id="itemName" placeholder="例如：0050、AAPL、台幣帳戶、房貸" required />
           </div>
 
           <div>
@@ -406,32 +437,32 @@
         </div>
 
         <div id="marketFields" class="dynamic-group hidden">
-          <div class="dynamic-group-title">股票 / ETF 資料</div>
+          <div class="dynamic-group-title">股票 / ETF 購入明細</div>
 
           <div class="form-grid">
-            <div>
-              <label>代號</label>
-              <input id="symbol" placeholder="例如：0050、AAPL、VT" />
-            </div>
-
             <div>
               <label>股數 / 單位數</label>
               <input id="quantity" type="number" step="0.0001" placeholder="例如：1000" />
             </div>
 
             <div>
-              <label>現價</label>
-              <input id="price" type="number" step="0.0001" placeholder="例如：180" />
+              <label>成本單價</label>
+              <input id="costPrice" type="number" step="0.0001" placeholder="例如：150" />
+            </div>
+
+            <div>
+              <label>目前市價</label>
+              <input id="marketPrice" type="number" step="0.0001" placeholder="例如：180" />
             </div>
 
             <div>
               <label>備註</label>
-              <input id="noteMarket" placeholder="選填" />
+              <input id="noteMarket" placeholder="例如：2026/05 定期定額" />
             </div>
           </div>
 
           <p class="muted">
-            股票 / ETF 會用「股數 × 現價」自動計算市值。美股與美股 ETF 可用 API 更新現價；台股目前先手動輸入。
+            同一類別、同一幣別、同一代號會自動加總。成本單價用來計算平均成本；目前市價用來計算目前估值。
           </p>
         </div>
 
@@ -469,7 +500,7 @@
 
         <div class="form-grid">
           <div>
-            <button type="submit">新增</button>
+            <button type="submit">新增明細</button>
           </div>
 
           <div class="hint-box">
@@ -565,16 +596,16 @@
           <thead>
             <tr>
               <th>類別</th>
-              <th>名稱</th>
-              <th>代號</th>
+              <th>項目</th>
               <th>幣別</th>
               <th>股數</th>
-              <th>現價</th>
-              <th>原幣金額</th>
+              <th>平均成本</th>
+              <th>目前市價</th>
+              <th>成本總額</th>
               <th>TWD 估值</th>
               <th>比重</th>
               <th>貸款條件</th>
-              <th>備註</th>
+              <th>明細</th>
               <th>操作</th>
             </tr>
           </thead>
@@ -598,7 +629,7 @@
   </main>
 
   <script>
-    const STORAGE_KEY = "personal_asset_manager_v5";
+    const STORAGE_KEY = "personal_asset_manager_v6";
     const FX_KEY = "personal_asset_manager_fx";
     const FX_UPDATED_AT_KEY = "personal_asset_manager_fx_updated_at";
     const FX_RATE_DATE_KEY = "personal_asset_manager_fx_rate_date";
@@ -641,6 +672,8 @@
 
     const form = document.getElementById("assetForm");
     const categoryInput = document.getElementById("category");
+    const itemLabel = document.getElementById("itemLabel");
+    const itemNameInput = document.getElementById("itemName");
     const currencyInput = document.getElementById("currency");
     const table = document.getElementById("assetTable");
     const singleLimitInput = document.getElementById("singleLimit");
@@ -654,6 +687,10 @@
     const loanPreview = document.getElementById("loanPreview");
 
     alphaKeyInput.value = localStorage.getItem(ALPHA_KEY) || "";
+
+    function createId() {
+      return "item_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+    }
 
     function saveItems() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
@@ -675,6 +712,10 @@
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
+    }
+
+    function normalizeKey(value) {
+      return String(value || "").trim().toUpperCase();
     }
 
     function formatCurrency(value) {
@@ -726,14 +767,9 @@
       return p * monthlyRate * factor / (factor - 1);
     }
 
-    function getOriginalAmount(item) {
+    function getEntryCostAmount(item) {
       if (isMarketAsset(item)) {
-        const quantity = Number(item.quantity || 0);
-        const price = Number(item.price || 0);
-
-        if (quantity > 0 && price > 0) {
-          return quantity * price;
-        }
+        return Number(item.quantity || 0) * Number(item.costPrice || 0);
       }
 
       if (item.category === "貸款") {
@@ -743,22 +779,110 @@
       return Number(item.amount || 0);
     }
 
-    function getTwdValue(item) {
-      const originalAmount = getOriginalAmount(item);
-      const rate = Number(fxRates[item.currency] || 1);
-      const twdValue = originalAmount * rate;
+    function getGroupKey(item) {
+      const nameKey = normalizeKey(item.name);
 
-      if (isDebt(item)) {
-        return -Math.abs(twdValue);
+      if (isMarketAsset(item)) {
+        return `MARKET::${item.category}::${item.currency}::${nameKey}`;
       }
 
-      return twdValue;
+      if (item.category === "貸款") {
+        return `LOAN::${item.currency}::${nameKey}`;
+      }
+
+      return `GENERAL::${item.category}::${item.currency}::${nameKey}`;
+    }
+
+    function getGroupedItems() {
+      const map = new Map();
+
+      items.forEach(item => {
+        if (!item.id) {
+          item.id = createId();
+        }
+
+        const key = getGroupKey(item);
+
+        if (!map.has(key)) {
+          map.set(key, {
+            key,
+            category: item.category,
+            name: item.name,
+            currency: item.currency,
+            entries: [],
+            quantity: 0,
+            costAmount: 0,
+            currentAmount: 0,
+            twdValue: 0,
+            avgCost: 0,
+            marketPrice: 0,
+            loanPrincipal: 0,
+            loanYears: 0,
+            loanRate: 0
+          });
+        }
+
+        const group = map.get(key);
+        group.entries.push(item);
+
+        if (isMarketAsset(item)) {
+          const quantity = Number(item.quantity || 0);
+          const costPrice = Number(item.costPrice || 0);
+          const marketPrice = Number(item.marketPrice || 0);
+
+          group.quantity += quantity;
+          group.costAmount += quantity * costPrice;
+
+          if (marketPrice > 0) {
+            group.marketPrice = marketPrice;
+          }
+        } else if (item.category === "貸款") {
+          group.loanPrincipal += Number(item.loanPrincipal || item.amount || 0);
+
+          if (Number(item.loanYears || 0) > 0) {
+            group.loanYears = Number(item.loanYears);
+          }
+
+          if (Number(item.loanRate || 0) >= 0) {
+            group.loanRate = Number(item.loanRate);
+          }
+        } else {
+          group.costAmount += Number(item.amount || 0);
+        }
+      });
+
+      const groups = Array.from(map.values());
+
+      groups.forEach(group => {
+        const rate = Number(fxRates[group.currency] || 1);
+
+        if (marketCategories.includes(group.category)) {
+          group.avgCost = group.quantity > 0 ? group.costAmount / group.quantity : 0;
+
+          const priceForValue = group.marketPrice > 0 ? group.marketPrice : group.avgCost;
+          group.currentAmount = group.quantity * priceForValue;
+          group.twdValue = group.currentAmount * rate;
+        } else if (group.category === "貸款") {
+          group.currentAmount = group.loanPrincipal;
+          group.twdValue = -Math.abs(group.currentAmount * rate);
+        } else if (isDebt(group)) {
+          group.currentAmount = group.costAmount;
+          group.twdValue = -Math.abs(group.currentAmount * rate);
+        } else {
+          group.currentAmount = group.costAmount;
+          group.twdValue = group.currentAmount * rate;
+        }
+      });
+
+      return groups.sort((a, b) => Math.abs(b.twdValue) - Math.abs(a.twdValue));
     }
 
     function isLikelyUsTicker(item) {
-      if (!item.symbol) return false;
+      if (!isMarketAsset(item)) return false;
 
-      const symbol = item.symbol.trim().toUpperCase();
+      const symbol = normalizeKey(item.name);
+
+      if (!symbol) return false;
 
       if (item.category === "美股") return true;
 
@@ -781,23 +905,37 @@
       simpleAmountFields.classList.toggle("hidden", isMarket || isLoan);
 
       amountLabel.textContent = "金額";
+      itemLabel.textContent = "項目 / 代號";
+      itemNameInput.placeholder = "例如：台幣帳戶、房貸、0050、AAPL";
 
       if (category === "台股") {
         currencyInput.value = "TWD";
-        categoryHint.textContent = "台股請輸入股票代號、股數與目前股價；系統會自動計算持股市值。";
+        itemLabel.textContent = "股票代號";
+        itemNameInput.placeholder = "例如：0050、2330";
+        categoryHint.textContent = "台股只需填代號、股數、成本單價與目前市價；分次購入同代號會自動加總。";
       } else if (category === "美股") {
         currencyInput.value = "USD";
-        categoryHint.textContent = "美股請輸入 ticker、股數與目前股價；若有 API Key，可自動更新現價。";
+        itemLabel.textContent = "股票代號";
+        itemNameInput.placeholder = "例如：AAPL、NVDA、TSLA";
+        categoryHint.textContent = "美股只需填 ticker、股數、成本單價與目前市價；同代號會自動加總。";
       } else if (category === "ETF") {
-        categoryHint.textContent = "ETF 可為台股 ETF 或美股 ETF。若是美股 ETF，幣別通常選 USD。";
+        itemLabel.textContent = "ETF 代號";
+        itemNameInput.placeholder = "例如：0050、00878、VT、VOO";
+        categoryHint.textContent = "ETF 可為台股 ETF 或美股 ETF；同類別、同幣別、同代號會自動加總。";
       } else if (isLoan) {
         currencyInput.value = "TWD";
+        itemLabel.textContent = "貸款名稱";
+        itemNameInput.placeholder = "例如：房貸、車貸、信貸";
         categoryHint.textContent = "貸款請輸入目前本金、剩餘年限與年利率，系統會估算每月本息與負債金額。";
       } else if (isCreditDebt) {
+        itemLabel.textContent = "負債名稱";
+        itemNameInput.placeholder = "例如：信用卡未繳款、分期付款";
         amountLabel.textContent = "目前應繳 / 未清償金額";
         categoryHint.textContent = "信用卡負債請輸入目前未清償金額。系統會將其列入總負債。";
       } else {
-        categoryHint.textContent = "一般資產請直接輸入目前估計金額。";
+        itemLabel.textContent = "項目名稱";
+        itemNameInput.placeholder = "例如：台幣帳戶、美元帳戶、保單、不動產";
+        categoryHint.textContent = "一般資產請直接輸入目前估計金額。同名稱、同幣別、同類別會自動加總。";
       }
 
       updateLoanPreview();
@@ -922,14 +1060,15 @@
         return;
       }
 
-      status.textContent = `更新中，共 ${targets.length} 個標的...`;
+      const uniqueSymbols = [...new Set(targets.map(item => normalizeKey(item.name)))];
+
+      status.textContent = `更新中，共 ${uniqueSymbols.length} 個標的...`;
 
       let successCount = 0;
       let failCount = 0;
 
-      for (const item of targets) {
+      for (const symbol of uniqueSymbols) {
         try {
-          const symbol = item.symbol.trim().toUpperCase();
           const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(apiKey)}`;
           const response = await fetch(url);
 
@@ -942,10 +1081,14 @@
           const price = quote ? Number(quote["05. price"]) : 0;
 
           if (price > 0) {
-            item.price = price;
-            item.currency = "USD";
-            item.amount = Number(item.quantity || 0) > 0 ? Number(item.quantity) * price : price;
-            item.updatedAt = new Date().toISOString();
+            items.forEach(item => {
+              if (isLikelyUsTicker(item) && normalizeKey(item.name) === symbol) {
+                item.marketPrice = price;
+                item.currency = "USD";
+                item.updatedAt = new Date().toISOString();
+              }
+            });
+
             successCount += 1;
           } else {
             failCount += 1;
@@ -961,21 +1104,65 @@
       status.textContent = `美股 / 美股 ETF 更新完成：成功 ${successCount} 個，失敗 ${failCount} 個。`;
     }
 
-    function formatLoanDetails(item) {
-      if (item.category !== "貸款") return "";
+    function formatLoanDetails(group) {
+      if (group.category !== "貸款") return "";
 
-      const years = Number(item.loanYears || 0);
-      const rate = Number(item.loanRate || 0);
-      const principal = Number(item.loanPrincipal || item.amount || 0);
-      const monthlyPayment = calculateMonthlyPayment(principal, rate, years);
+      const monthlyPayment = calculateMonthlyPayment(
+        group.loanPrincipal,
+        group.loanRate,
+        group.loanYears
+      );
 
       const rows = [];
 
-      if (years > 0) rows.push(`剩餘 ${formatNumber(years, 1)} 年`);
-      if (rate >= 0) rows.push(`年利率 ${formatNumber(rate, 3)}%`);
-      if (monthlyPayment > 0) rows.push(`月付約 ${formatOriginalCurrency(monthlyPayment, item.currency)}`);
+      if (group.loanYears > 0) rows.push(`剩餘 ${formatNumber(group.loanYears, 1)} 年`);
+      if (group.loanRate >= 0) rows.push(`年利率 ${formatNumber(group.loanRate, 3)}%`);
+      if (monthlyPayment > 0) rows.push(`月付約 ${formatOriginalCurrency(monthlyPayment, group.currency)}`);
 
       return rows.map(escapeHtml).join("<br>");
+    }
+
+    function renderDetails(group) {
+      const rows = group.entries.map(entry => {
+        let main = "";
+        let meta = "";
+
+        if (isMarketAsset(entry)) {
+          const quantity = Number(entry.quantity || 0);
+          const costPrice = Number(entry.costPrice || 0);
+          const marketPrice = Number(entry.marketPrice || 0);
+          const costAmount = quantity * costPrice;
+
+          main = `股數 ${formatNumber(quantity, 4)}｜成本 ${formatOriginalCurrency(costPrice, entry.currency)}｜成本小計 ${formatOriginalCurrency(costAmount, entry.currency)}`;
+          meta = `目前市價 ${marketPrice > 0 ? formatOriginalCurrency(marketPrice, entry.currency) : "未填"}${entry.note ? "｜" + entry.note : ""}`;
+        } else if (entry.category === "貸款") {
+          const principal = Number(entry.loanPrincipal || entry.amount || 0);
+          main = `本金 ${formatOriginalCurrency(principal, entry.currency)}｜剩餘 ${formatNumber(entry.loanYears, 1)} 年｜年利率 ${formatNumber(entry.loanRate, 3)}%`;
+          meta = entry.note || "";
+        } else {
+          main = `金額 ${formatOriginalCurrency(entry.amount, entry.currency)}`;
+          meta = entry.note || "";
+        }
+
+        return `
+          <div class="detail-row">
+            <div>${escapeHtml(main)}</div>
+            <div class="detail-meta">${escapeHtml(meta)}</div>
+            <div class="detail-actions">
+              <button class="danger small-button" onclick="removeItemById('${entry.id}')">刪除此筆</button>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      return `
+        <details class="asset-detail">
+          <summary>${group.entries.length} 筆明細</summary>
+          <div class="detail-box">
+            ${rows}
+          </div>
+        </details>
+      `;
     }
 
     function render() {
@@ -995,13 +1182,15 @@
         fxRateDateElement.textContent = `匯率資料時間：${savedFxRateDate}`;
       }
 
-      const totalAssets = items
-        .filter(item => !isDebt(item))
-        .reduce((sum, item) => sum + Math.max(getTwdValue(item), 0), 0);
+      const groups = getGroupedItems();
 
-      const totalDebt = items
-        .filter(item => isDebt(item))
-        .reduce((sum, item) => sum + Math.abs(getTwdValue(item)), 0);
+      const totalAssets = groups
+        .filter(group => !isDebt(group))
+        .reduce((sum, group) => sum + Math.max(group.twdValue, 0), 0);
+
+      const totalDebt = groups
+        .filter(group => isDebt(group))
+        .reduce((sum, group) => sum + Math.abs(group.twdValue), 0);
 
       const netWorth = totalAssets - totalDebt;
 
@@ -1015,37 +1204,36 @@
 
       table.innerHTML = "";
 
-      items.forEach((item, index) => {
-        const originalAmount = getOriginalAmount(item);
-        const twdValue = getTwdValue(item);
-
-        const ratio = totalAssets > 0 && !isDebt(item)
-          ? Math.max(twdValue, 0) / totalAssets * 100
+      groups.forEach(group => {
+        const ratio = totalAssets > 0 && !isDebt(group)
+          ? Math.max(group.twdValue, 0) / totalAssets * 100
           : 0;
 
         if (ratio > maxRatio) {
           maxRatio = ratio;
         }
 
-        const isOverLimit = !isDebt(item) && ratio > singleLimit;
-        const twdValueClass = twdValue < 0 ? "negative" : "positive";
+        const isOverLimit = !isDebt(group) && ratio > singleLimit;
+        const twdValueClass = group.twdValue < 0 ? "negative" : "positive";
+
+        const isMarket = marketCategories.includes(group.category);
 
         const row = document.createElement("tr");
 
         row.innerHTML = `
-          <td><span class="pill">${escapeHtml(item.category)}</span></td>
-          <td class="${isOverLimit ? "warning" : ""}">${escapeHtml(item.name)}</td>
-          <td>${escapeHtml(item.symbol || "")}</td>
-          <td>${escapeHtml(item.currency)}</td>
-          <td>${isMarketAsset(item) ? formatNumber(item.quantity, 4) : ""}</td>
-          <td>${isMarketAsset(item) ? formatNumber(item.price, 4) : ""}</td>
-          <td>${formatOriginalCurrency(isDebt(item) ? -Math.abs(originalAmount) : originalAmount, item.currency)}</td>
-          <td class="${twdValueClass}">${formatCurrency(twdValue)}</td>
+          <td><span class="pill">${escapeHtml(group.category)}</span></td>
+          <td class="${isOverLimit ? "warning" : ""}">${escapeHtml(group.name)}</td>
+          <td>${escapeHtml(group.currency)}</td>
+          <td>${isMarket ? formatNumber(group.quantity, 4) : ""}</td>
+          <td>${isMarket ? formatOriginalCurrency(group.avgCost, group.currency) : ""}</td>
+          <td>${isMarket ? formatOriginalCurrency(group.marketPrice || group.avgCost, group.currency) : ""}</td>
+          <td>${formatOriginalCurrency(isDebt(group) ? -Math.abs(group.costAmount || group.currentAmount) : group.costAmount, group.currency)}</td>
+          <td class="${twdValueClass}">${formatCurrency(group.twdValue)}</td>
           <td>${ratio.toFixed(1)}%</td>
-          <td>${formatLoanDetails(item)}</td>
-          <td>${escapeHtml(item.note || "")}</td>
+          <td>${formatLoanDetails(group)}</td>
+          <td>${renderDetails(group)}</td>
           <td>
-            <button class="danger small-button" onclick="removeItem(${index})">刪除</button>
+            <button class="danger small-button" onclick="removeGroup('${group.key}')">刪除全部</button>
           </td>
         `;
 
@@ -1054,18 +1242,19 @@
 
       document.getElementById("maxHoldingRatio").textContent = maxRatio.toFixed(1) + "%";
 
-      renderAllocation(totalAssets);
-      renderSuggestions(totalAssets, totalDebt, singleLimit);
+      saveItems();
+      renderAllocation(groups, totalAssets);
+      renderSuggestions(groups, totalAssets, totalDebt, singleLimit);
     }
 
-    function renderAllocation(totalAssets) {
+    function renderAllocation(groups, totalAssets) {
       const allocation = {};
 
-      items
-        .filter(item => !isDebt(item))
-        .forEach(item => {
-          const value = Math.max(getTwdValue(item), 0);
-          allocation[item.category] = (allocation[item.category] || 0) + value;
+      groups
+        .filter(group => !isDebt(group))
+        .forEach(group => {
+          const value = Math.max(group.twdValue, 0);
+          allocation[group.category] = (allocation[group.category] || 0) + value;
         });
 
       const container = document.getElementById("allocation");
@@ -1084,20 +1273,20 @@
         .join("");
     }
 
-    function renderSuggestions(totalAssets, totalDebt, singleLimit) {
+    function renderSuggestions(groups, totalAssets, totalDebt, singleLimit) {
       const suggestions = [];
 
-      if (items.length === 0) {
+      if (groups.length === 0) {
         suggestions.push("尚未新增資料。請先輸入資產與負債。");
       }
 
-      const cash = items
-        .filter(item => item.category === "現金")
-        .reduce((sum, item) => sum + Math.max(getTwdValue(item), 0), 0);
+      const cash = groups
+        .filter(group => group.category === "現金")
+        .reduce((sum, group) => sum + Math.max(group.twdValue, 0), 0);
 
-      const stockLike = items
-        .filter(item => ["台股", "美股", "ETF", "基金"].includes(item.category))
-        .reduce((sum, item) => sum + Math.max(getTwdValue(item), 0), 0);
+      const stockLike = groups
+        .filter(group => ["台股", "美股", "ETF", "基金"].includes(group.category))
+        .reduce((sum, group) => sum + Math.max(group.twdValue, 0), 0);
 
       const cashRatio = totalAssets > 0 ? cash / totalAssets * 100 : 0;
       const stockRatio = totalAssets > 0 ? stockLike / totalAssets * 100 : 0;
@@ -1115,14 +1304,13 @@
         suggestions.push(`負債約為總資產的 ${debtRatio.toFixed(1)}%，建議持續追蹤槓桿與現金流壓力。`);
       }
 
-      items.forEach(item => {
-        if (isDebt(item)) return;
+      groups.forEach(group => {
+        if (isDebt(group)) return;
 
-        const twdValue = Math.max(getTwdValue(item), 0);
-        const ratio = totalAssets > 0 ? twdValue / totalAssets * 100 : 0;
+        const ratio = totalAssets > 0 ? Math.max(group.twdValue, 0) / totalAssets * 100 : 0;
 
         if (ratio > singleLimit) {
-          suggestions.push(`${item.name} 占總資產 ${ratio.toFixed(1)}%，已超過單一標的上限 ${singleLimit}%。`);
+          suggestions.push(`${group.name} 占總資產 ${ratio.toFixed(1)}%，已超過單一標的上限 ${singleLimit}%。`);
         }
       });
 
@@ -1135,8 +1323,14 @@
         .join("");
     }
 
-    function removeItem(index) {
-      items.splice(index, 1);
+    function removeItemById(id) {
+      items = items.filter(item => item.id !== id);
+      saveItems();
+      render();
+    }
+
+    function removeGroup(groupKey) {
+      items = items.filter(item => getGroupKey(item) !== groupKey);
       saveItems();
       render();
     }
@@ -1157,13 +1351,17 @@
       event.preventDefault();
 
       const category = document.getElementById("category").value;
-      const name = document.getElementById("name").value.trim();
+      const rawName = document.getElementById("itemName").value.trim();
       const currency = document.getElementById("currency").value;
       const note = getCurrentNote(category);
 
-      const symbol = document.getElementById("symbol").value.trim().toUpperCase();
+      const name = marketCategories.includes(category)
+        ? normalizeKey(rawName)
+        : rawName;
+
       const quantity = Number(document.getElementById("quantity").value || 0);
-      const price = Number(document.getElementById("price").value || 0);
+      const costPrice = Number(document.getElementById("costPrice").value || 0);
+      const marketPrice = Number(document.getElementById("marketPrice").value || 0);
       const amount = Number(document.getElementById("amount").value || 0);
 
       const loanPrincipal = Number(document.getElementById("loanPrincipal").value || 0);
@@ -1171,24 +1369,25 @@
       const loanRate = Number(document.getElementById("loanRate").value || 0);
 
       if (!name) {
-        alert("請輸入名稱。");
+        alert("請輸入項目名稱或代號。");
         return;
       }
 
       if (marketCategories.includes(category)) {
-        if (quantity <= 0 || price <= 0) {
-          alert("股票 / ETF 請輸入股數與現價。");
+        if (quantity <= 0 || costPrice <= 0) {
+          alert("股票 / ETF 請至少輸入股數與成本單價。");
           return;
         }
 
         items.push({
+          id: createId(),
           category,
           name,
-          symbol: symbol || name.toUpperCase(),
           currency,
           quantity,
-          price,
-          amount: quantity * price,
+          costPrice,
+          marketPrice: marketPrice > 0 ? marketPrice : costPrice,
+          amount: quantity * costPrice,
           note,
           updatedAt: new Date().toISOString()
         });
@@ -1201,12 +1400,13 @@
         const monthlyPayment = calculateMonthlyPayment(loanPrincipal, loanRate, loanYears);
 
         items.push({
+          id: createId(),
           category,
           name,
-          symbol: "",
           currency,
           quantity: 0,
-          price: 0,
+          costPrice: 0,
+          marketPrice: 0,
           amount: loanPrincipal,
           loanPrincipal,
           loanYears,
@@ -1222,12 +1422,13 @@
         }
 
         items.push({
+          id: createId(),
           category,
           name,
-          symbol: "",
           currency,
           quantity: 0,
-          price: 0,
+          costPrice: 0,
+          marketPrice: 0,
           amount,
           note,
           updatedAt: new Date().toISOString()
