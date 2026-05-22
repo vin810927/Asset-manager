@@ -338,8 +338,35 @@
       white-space: nowrap;
     }
 
+    .alert-box {
+      border-radius: 12px;
+      padding: 10px 12px;
+      margin-bottom: 16px;
+      border: 1px solid #facc15;
+      background: #fefce8;
+      color: #854d0e;
+      font-size: 14px;
+    }
+
+    .alert-box.good {
+      border-color: #86efac;
+      background: #f0fdf4;
+      color: #166534;
+    }
+
+    .inline-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
     @media (max-width: 900px) {
       .compact-two {
+        grid-template-columns: 1fr;
+      }
+
+      .inline-actions {
         grid-template-columns: 1fr;
       }
     }
@@ -349,10 +376,12 @@
 <body>
   <header>
     <h1>個人資產管理 Dashboard</h1>
-    <p>多幣別資產、股票 / ETF、貸款、匯率與曝險追蹤</p>
+    <p>多幣別資產、股票 / ETF、貸款、匯率、目標與曝險追蹤</p>
   </header>
 
   <main>
+    <div id="freshnessBanner"></div>
+
     <section class="grid">
       <div class="card">
         <div>總資產</div>
@@ -514,7 +543,7 @@
 
     <section class="card section compact-settings">
       <details>
-        <summary>進階設定：匯率 / 美股報價 / 曝險規則</summary>
+        <summary>進階設定：匯率 / 美股報價 / 理財目標 / 備份</summary>
 
         <div class="settings-grid">
           <div class="settings-panel">
@@ -575,14 +604,52 @@
           </div>
 
           <div class="settings-panel">
-            <h3>曝險規則</h3>
+            <h3>理財目標與提醒</h3>
+
+            <label>每月生活費估計</label>
+            <input id="monthlyExpense" type="number" step="1000" />
+
+            <label>緊急預備金月數</label>
+            <input id="emergencyMonths" type="number" step="1" />
+
+            <label>股票 / ETF / 基金上限（%）</label>
+            <input id="maxStockRatio" type="number" min="1" max="100" />
+
+            <label>負債比上限（%）</label>
+            <input id="maxDebtRatio" type="number" min="1" max="300" />
 
             <label>單一標的上限（%）</label>
-            <input id="singleLimit" type="number" value="15" min="1" max="100" />
+            <input id="singleLimit" type="number" min="1" max="100" />
+
+            <label>幾天沒更新後提醒</label>
+            <input id="reminderDays" type="number" min="1" max="365" />
+
+            <div class="inline-actions">
+              <button type="button" onclick="saveGoals()">儲存目標</button>
+              <button type="button" class="secondary" onclick="markReviewedToday()">標記今天已檢查</button>
+            </div>
+
+            <div class="status" id="goalStatus"></div>
+          </div>
+
+          <div class="settings-panel">
+            <h3>備份 / 還原</h3>
 
             <p class="muted">
-              若單一資產占總資產比例超過此數值，系統會顯示警示。
+              目前資料儲存在瀏覽器本機。建議定期匯出 JSON 備份，避免清除快取或換裝置時遺失。
             </p>
+
+            <button type="button" onclick="exportData()">匯出 JSON 備份</button>
+
+            <div style="height: 8px;"></div>
+
+            <button type="button" class="secondary" onclick="document.getElementById('importFile').click()">
+              匯入 JSON 備份
+            </button>
+
+            <input id="importFile" type="file" accept="application/json" class="hidden" />
+
+            <div class="status" id="backupStatus"></div>
           </div>
         </div>
       </details>
@@ -629,14 +696,30 @@
   </main>
 
   <script>
-    const STORAGE_KEY = "personal_asset_manager_v6";
+    const STORAGE_KEY = "personal_asset_manager_v7";
     const FX_KEY = "personal_asset_manager_fx";
     const FX_UPDATED_AT_KEY = "personal_asset_manager_fx_updated_at";
     const FX_RATE_DATE_KEY = "personal_asset_manager_fx_rate_date";
     const ALPHA_KEY = "personal_asset_manager_alpha_key";
+    const GOALS_KEY = "personal_asset_manager_goals";
+    const LAST_REVIEWED_KEY = "personal_asset_manager_last_reviewed_at";
 
     const marketCategories = ["台股", "美股", "ETF"];
     const debtCategories = ["貸款", "信用卡負債", "負債"];
+
+    const defaultGoals = {
+      monthlyExpense: 100000,
+      emergencyMonths: 6,
+      maxStockRatio: 80,
+      maxDebtRatio: 50,
+      singleLimit: 15,
+      reminderDays: 30
+    };
+
+    let goals = {
+      ...defaultGoals,
+      ...(JSON.parse(localStorage.getItem(GOALS_KEY) || "{}"))
+    };
 
     const currencies = [
       "TWD",
@@ -676,7 +759,6 @@
     const itemNameInput = document.getElementById("itemName");
     const currencyInput = document.getElementById("currency");
     const table = document.getElementById("assetTable");
-    const singleLimitInput = document.getElementById("singleLimit");
     const alphaKeyInput = document.getElementById("alphaKey");
 
     const simpleAmountFields = document.getElementById("simpleAmountFields");
@@ -703,6 +785,41 @@
     function saveAlphaKey() {
       localStorage.setItem(ALPHA_KEY, alphaKeyInput.value.trim());
       document.getElementById("stockStatus").textContent = "API Key 已儲存於本機瀏覽器。";
+    }
+
+    function saveGoals() {
+      goals = {
+        monthlyExpense: Number(document.getElementById("monthlyExpense").value || defaultGoals.monthlyExpense),
+        emergencyMonths: Number(document.getElementById("emergencyMonths").value || defaultGoals.emergencyMonths),
+        maxStockRatio: Number(document.getElementById("maxStockRatio").value || defaultGoals.maxStockRatio),
+        maxDebtRatio: Number(document.getElementById("maxDebtRatio").value || defaultGoals.maxDebtRatio),
+        singleLimit: Number(document.getElementById("singleLimit").value || defaultGoals.singleLimit),
+        reminderDays: Number(document.getElementById("reminderDays").value || defaultGoals.reminderDays)
+      };
+
+      localStorage.setItem(GOALS_KEY, JSON.stringify(goals));
+      document.getElementById("goalStatus").textContent = "理財目標已儲存。";
+      render();
+    }
+
+    function loadGoalInputs() {
+      document.getElementById("monthlyExpense").value = goals.monthlyExpense;
+      document.getElementById("emergencyMonths").value = goals.emergencyMonths;
+      document.getElementById("maxStockRatio").value = goals.maxStockRatio;
+      document.getElementById("maxDebtRatio").value = goals.maxDebtRatio;
+      document.getElementById("singleLimit").value = goals.singleLimit;
+      document.getElementById("reminderDays").value = goals.reminderDays;
+    }
+
+    function markReviewedToday() {
+      const now = new Date().toISOString();
+      localStorage.setItem(LAST_REVIEWED_KEY, now);
+      document.getElementById("goalStatus").textContent = "已標記今天完成資產檢查。";
+      renderFreshnessBanner();
+    }
+
+    function updateLastReviewedOnDataChange() {
+      localStorage.setItem(LAST_REVIEWED_KEY, new Date().toISOString());
     }
 
     function escapeHtml(value) {
@@ -740,12 +857,12 @@
       });
     }
 
-    function isDebt(item) {
-      return debtCategories.includes(item.category);
+    function isDebt(itemOrGroup) {
+      return debtCategories.includes(itemOrGroup.category);
     }
 
-    function isMarketAsset(item) {
-      return marketCategories.includes(item.category);
+    function isMarketAsset(itemOrGroup) {
+      return marketCategories.includes(itemOrGroup.category);
     }
 
     function calculateMonthlyPayment(principal, annualRate, years) {
@@ -765,18 +882,6 @@
       const factor = Math.pow(1 + monthlyRate, months);
 
       return p * monthlyRate * factor / (factor - 1);
-    }
-
-    function getEntryCostAmount(item) {
-      if (isMarketAsset(item)) {
-        return Number(item.quantity || 0) * Number(item.costPrice || 0);
-      }
-
-      if (item.category === "貸款") {
-        return Number(item.loanPrincipal || item.amount || 0);
-      }
-
-      return Number(item.amount || 0);
     }
 
     function getGroupKey(item) {
@@ -864,6 +969,7 @@
           group.twdValue = group.currentAmount * rate;
         } else if (group.category === "貸款") {
           group.currentAmount = group.loanPrincipal;
+          group.costAmount = group.loanPrincipal;
           group.twdValue = -Math.abs(group.currentAmount * rate);
         } else if (isDebt(group)) {
           group.currentAmount = group.costAmount;
@@ -1098,6 +1204,7 @@
         }
       }
 
+      updateLastReviewedOnDataChange();
       saveItems();
       render();
 
@@ -1165,8 +1272,30 @@
       `;
     }
 
+    function renderFreshnessBanner() {
+      const container = document.getElementById("freshnessBanner");
+      const lastReviewedAt = localStorage.getItem(LAST_REVIEWED_KEY);
+      const reminderDays = Number(goals.reminderDays || defaultGoals.reminderDays);
+
+      if (!lastReviewedAt) {
+        container.innerHTML = `<div class="alert-box">尚未標記資產檢查時間。建議先完成一次資產資料檢查，或到進階設定標記今天已檢查。</div>`;
+        return;
+      }
+
+      const last = new Date(lastReviewedAt);
+      const now = new Date();
+      const diffDays = Math.floor((now - last) / (1000 * 60 * 60 * 24));
+
+      if (diffDays >= reminderDays) {
+        container.innerHTML = `<div class="alert-box">距離上次資產檢查已 ${diffDays} 天。建議更新資產、負債、匯率與股價資料。</div>`;
+      } else {
+        container.innerHTML = `<div class="alert-box good">資產資料檢查狀態正常。上次檢查：約 ${diffDays} 天前。</div>`;
+      }
+    }
+
     function render() {
       renderFxTable();
+      renderFreshnessBanner();
 
       const savedFxUpdatedAt = localStorage.getItem(FX_UPDATED_AT_KEY);
       const savedFxRateDate = localStorage.getItem(FX_RATE_DATE_KEY);
@@ -1198,7 +1327,7 @@
       document.getElementById("totalDebt").textContent = formatCurrency(totalDebt);
       document.getElementById("netWorth").textContent = formatCurrency(netWorth);
 
-      const singleLimit = Number(singleLimitInput.value) || 15;
+      const singleLimit = Number(goals.singleLimit || defaultGoals.singleLimit);
 
       let maxRatio = 0;
 
@@ -1292,16 +1421,22 @@
       const stockRatio = totalAssets > 0 ? stockLike / totalAssets * 100 : 0;
       const debtRatio = totalAssets > 0 ? totalDebt / totalAssets * 100 : 0;
 
+      const emergencyTarget = Number(goals.monthlyExpense || 0) * Number(goals.emergencyMonths || 0);
+
+      if (emergencyTarget > 0 && cash < emergencyTarget) {
+        suggestions.push(`緊急預備金目標為 ${formatCurrency(emergencyTarget)}，目前現金約 ${formatCurrency(cash)}，尚差 ${formatCurrency(emergencyTarget - cash)}。`);
+      }
+
       if (totalAssets > 0 && cashRatio < 10) {
         suggestions.push("現金比重低於 10%，若近期有大額支出或市場波動，建議提高流動性部位。");
       }
 
-      if (stockRatio > 80) {
-        suggestions.push("股票、ETF、基金合計比重超過 80%，整體投資部位偏高，建議確認風險承受度。");
+      if (stockRatio > Number(goals.maxStockRatio || defaultGoals.maxStockRatio)) {
+        suggestions.push(`股票、ETF、基金合計比重為 ${stockRatio.toFixed(1)}%，高於設定上限 ${goals.maxStockRatio}%。`);
       }
 
-      if (debtRatio > 50) {
-        suggestions.push(`負債約為總資產的 ${debtRatio.toFixed(1)}%，建議持續追蹤槓桿與現金流壓力。`);
+      if (debtRatio > Number(goals.maxDebtRatio || defaultGoals.maxDebtRatio)) {
+        suggestions.push(`負債約為總資產的 ${debtRatio.toFixed(1)}%，高於設定上限 ${goals.maxDebtRatio}%。建議追蹤槓桿與現金流壓力。`);
       }
 
       groups.forEach(group => {
@@ -1315,7 +1450,7 @@
       });
 
       if (suggestions.length === 0) {
-        suggestions.push("目前沒有明顯超標項目。");
+        suggestions.push("目前沒有明顯超標項目。整體配置符合你目前設定的理財目標。");
       }
 
       document.getElementById("suggestions").innerHTML = suggestions
@@ -1325,12 +1460,14 @@
 
     function removeItemById(id) {
       items = items.filter(item => item.id !== id);
+      updateLastReviewedOnDataChange();
       saveItems();
       render();
     }
 
     function removeGroup(groupKey) {
       items = items.filter(item => getGroupKey(item) !== groupKey);
+      updateLastReviewedOnDataChange();
       saveItems();
       render();
     }
@@ -1345,6 +1482,89 @@
       }
 
       return document.getElementById("noteSimple").value.trim();
+    }
+
+    function exportData() {
+      const payload = {
+        app: "personal_asset_manager",
+        version: "0.2",
+        exportedAt: new Date().toISOString(),
+        items,
+        fxRates,
+        goals,
+        lastReviewedAt: localStorage.getItem(LAST_REVIEWED_KEY),
+        fxUpdatedAt: localStorage.getItem(FX_UPDATED_AT_KEY),
+        fxRateDate: localStorage.getItem(FX_RATE_DATE_KEY)
+      };
+
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json"
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const date = new Date().toISOString().slice(0, 10);
+
+      a.href = url;
+      a.download = `asset-manager-backup-${date}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      document.getElementById("backupStatus").textContent = "已匯出 JSON 備份。";
+    }
+
+    function importDataFromFile(file) {
+      const reader = new FileReader();
+
+      reader.onload = event => {
+        try {
+          const payload = JSON.parse(event.target.result);
+
+          if (!payload || !Array.isArray(payload.items)) {
+            throw new Error("備份檔格式不正確");
+          }
+
+          items = payload.items;
+          fxRates = {
+            ...fxRates,
+            ...(payload.fxRates || {})
+          };
+          goals = {
+            ...defaultGoals,
+            ...(payload.goals || {})
+          };
+
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+          localStorage.setItem(FX_KEY, JSON.stringify(fxRates));
+          localStorage.setItem(GOALS_KEY, JSON.stringify(goals));
+
+          if (payload.lastReviewedAt) {
+            localStorage.setItem(LAST_REVIEWED_KEY, payload.lastReviewedAt);
+          } else {
+            updateLastReviewedOnDataChange();
+          }
+
+          if (payload.fxUpdatedAt) {
+            localStorage.setItem(FX_UPDATED_AT_KEY, payload.fxUpdatedAt);
+          }
+
+          if (payload.fxRateDate) {
+            localStorage.setItem(FX_RATE_DATE_KEY, payload.fxRateDate);
+          }
+
+          loadGoalInputs();
+          renderCategoryFields();
+          render();
+
+          document.getElementById("backupStatus").textContent = "備份匯入完成。";
+        } catch (error) {
+          document.getElementById("backupStatus").textContent = "匯入失敗：請確認檔案是否為本工具匯出的 JSON 備份。";
+        }
+      };
+
+      reader.readAsText(file);
     }
 
     form.addEventListener("submit", event => {
@@ -1435,6 +1655,7 @@
         });
       }
 
+      updateLastReviewedOnDataChange();
       saveItems();
 
       form.reset();
@@ -1450,8 +1671,19 @@
       document.getElementById(id).addEventListener("input", updateLoanPreview);
     });
 
-    singleLimitInput.addEventListener("input", render);
+    ["monthlyExpense", "emergencyMonths", "maxStockRatio", "maxDebtRatio", "singleLimit", "reminderDays"].forEach(id => {
+      document.getElementById(id).addEventListener("change", saveGoals);
+    });
 
+    document.getElementById("importFile").addEventListener("change", event => {
+      const file = event.target.files[0];
+      if (file) {
+        importDataFromFile(file);
+      }
+      event.target.value = "";
+    });
+
+    loadGoalInputs();
     renderCategoryFields();
     render();
   </script>
