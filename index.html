@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>個人資產管理 Dashboard</title>
+
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -16,6 +17,10 @@
       background: #334155;
       color: #f8fafc;
       padding: 24px;
+    }
+
+    header h1 {
+      color: #f8fafc;
     }
 
     header p {
@@ -32,10 +37,6 @@
     h1, h2, h3 {
       margin-top: 0;
       color: #334155;
-    }
-
-    header h1 {
-      color: #f8fafc;
     }
 
     .grid {
@@ -118,6 +119,12 @@
       background: #991b1b;
     }
 
+    .small-button {
+      padding: 6px 10px;
+      font-size: 13px;
+      border-radius: 8px;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -140,16 +147,6 @@
       white-space: nowrap;
     }
 
-    .warning {
-      color: #b91c1c;
-      font-weight: 700;
-    }
-
-    .muted {
-      color: #64748b;
-      font-size: 14px;
-    }
-
     .section {
       margin-bottom: 28px;
     }
@@ -161,6 +158,22 @@
       margin-bottom: 12px;
     }
 
+    .muted {
+      color: #64748b;
+      font-size: 14px;
+    }
+
+    .status {
+      margin-top: 8px;
+      font-size: 14px;
+      color: #64748b;
+    }
+
+    .warning {
+      color: #b91c1c;
+      font-weight: 700;
+    }
+
     .pill {
       display: inline-block;
       padding: 4px 8px;
@@ -169,25 +182,51 @@
       color: #475569;
       font-size: 12px;
       font-weight: 700;
-    }
-
-    .small-button {
-      padding: 6px 10px;
-      font-size: 13px;
-      border-radius: 8px;
+      white-space: nowrap;
     }
 
     .table-wrap {
       overflow-x: auto;
     }
 
-    .status {
-      margin-top: 8px;
-      font-size: 14px;
-      color: #64748b;
+    .fx-details {
+      margin-top: 16px;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: #f8fafc;
+    }
+
+    .fx-details summary {
+      cursor: pointer;
+      font-weight: 700;
+      color: #475569;
+    }
+
+    .fx-details summary:hover {
+      color: #334155;
+    }
+
+    .hint-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-top: 12px;
+    }
+
+    .positive {
+      color: #166534;
+      font-weight: 700;
+    }
+
+    .negative {
+      color: #b91c1c;
+      font-weight: 700;
     }
   </style>
 </head>
+
 <body>
   <header>
     <h1>個人資產管理 Dashboard</h1>
@@ -200,14 +239,17 @@
         <div>總資產</div>
         <div class="value" id="totalAssets">NT$0</div>
       </div>
+
       <div class="card">
         <div>總負債</div>
         <div class="value" id="totalDebt">NT$0</div>
       </div>
+
       <div class="card">
         <div>淨資產</div>
         <div class="value" id="netWorth">NT$0</div>
       </div>
+
       <div class="card">
         <div>單一標的最大比重</div>
         <div class="value" id="maxHoldingRatio">0%</div>
@@ -286,49 +328,67 @@
         </div>
       </form>
 
-      <p class="muted">
-        股票 / ETF 若填入「股數」與「現價」，系統會自動用股數 × 現價計算金額；其他資產可直接填「金額」。
-      </p>
+      <div class="hint-box">
+        <p class="muted">
+          股票 / ETF 若填入「股數」與「現價」，系統會自動用股數 × 現價計算金額；其他資產可直接填「金額」。
+        </p>
+      </div>
     </section>
 
     <section class="card section">
       <h2>匯率設定</h2>
-      <p class="muted">系統以 TWD 作為基準幣。下方代表「1 單位外幣 = 多少 TWD」。</p>
+
+      <p class="muted">
+        系統以 TWD 作為基準幣。匯率只用於估算外幣資產的台幣價值。
+      </p>
 
       <div class="row">
         <div>
-          <button type="button" onclick="fetchExchangeRates()">更新匯率</button>
+          <button type="button" onclick="fetchExchangeRates()">更新每日參考匯率</button>
           <div class="status" id="fxStatus">尚未更新匯率。若更新失敗，可手動調整。</div>
+          <div class="status" id="fxRateDate"></div>
+          <div class="status" id="fxUpdatedAt"></div>
         </div>
       </div>
 
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>幣別</th>
-              <th>匯率</th>
-            </tr>
-          </thead>
-          <tbody id="fxTable"></tbody>
-        </table>
-      </div>
+      <details class="fx-details">
+        <summary>查看 / 手動調整匯率</summary>
+
+        <p class="muted">
+          下方代表「1 單位外幣 = 多少 TWD」。例如 USD = 31.5，代表 1 美元約等於 31.5 新台幣。
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>幣別</th>
+                <th>匯率</th>
+              </tr>
+            </thead>
+            <tbody id="fxTable"></tbody>
+          </table>
+        </div>
+      </details>
     </section>
 
     <section class="card section">
       <h2>美股報價設定</h2>
+
       <p class="muted">
-        美股現價可用 Alpha Vantage API key 抓取。台股即時報價先保留手動輸入，之後再接台股行情 API。
+        美股現價可用 Alpha Vantage API Key 抓取。台股現價目前先保留手動輸入。
       </p>
 
       <div class="row">
         <div>
           <label>Alpha Vantage API Key</label>
-          <input id="alphaKey" placeholder="貼上你的 Alpha Vantage API key" />
+          <input id="alphaKey" placeholder="貼上你的 Alpha Vantage API Key" />
         </div>
+
         <div>
           <button type="button" onclick="saveAlphaKey()">儲存 API Key</button>
         </div>
+
         <div>
           <button type="button" class="secondary" onclick="updateUsStockPrices()">更新美股 / 美股 ETF 現價</button>
         </div>
@@ -339,8 +399,10 @@
 
     <section class="card section">
       <h2>曝險規則</h2>
+
       <label>單一標的上限（%）</label>
       <input id="singleLimit" type="number" value="15" min="1" max="100" />
+
       <p class="muted">若單一資產占總資產比例超過此數值，系統會顯示警示。</p>
     </section>
 
@@ -364,6 +426,7 @@
               <th>操作</th>
             </tr>
           </thead>
+
           <tbody id="assetTable"></tbody>
         </table>
       </div>
@@ -381,11 +444,26 @@
   </main>
 
   <script>
-    const STORAGE_KEY = "personal_asset_manager_v2";
+    const STORAGE_KEY = "personal_asset_manager_v3";
     const FX_KEY = "personal_asset_manager_fx";
+    const FX_UPDATED_AT_KEY = "personal_asset_manager_fx_updated_at";
+    const FX_RATE_DATE_KEY = "personal_asset_manager_fx_rate_date";
     const ALPHA_KEY = "personal_asset_manager_alpha_key";
 
-    const currencies = ["TWD", "USD", "JPY", "EUR", "GBP", "AUD", "CAD", "NZD", "CHF", "HKD", "SGD", "CNY"];
+    const currencies = [
+      "TWD",
+      "USD",
+      "JPY",
+      "EUR",
+      "GBP",
+      "AUD",
+      "CAD",
+      "NZD",
+      "CHF",
+      "HKD",
+      "SGD",
+      "CNY"
+    ];
 
     let items = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
 
@@ -430,8 +508,17 @@
       });
     }
 
+    function formatOriginalCurrency(value, currency) {
+      return currency + " " + Number(value || 0).toLocaleString("zh-TW", {
+        maximumFractionDigits: 2
+      });
+    }
+
     function formatNumber(value, digits = 2) {
-      if (value === "" || value === null || value === undefined || Number.isNaN(Number(value))) return "";
+      if (value === "" || value === null || value === undefined || Number.isNaN(Number(value))) {
+        return "";
+      }
+
       return Number(value).toLocaleString("zh-TW", {
         maximumFractionDigits: digits
       });
@@ -459,10 +546,6 @@
       }
 
       return twdValue;
-    }
-
-    function isMarketAsset(item) {
-      return ["台股", "美股", "ETF"].includes(item.category);
     }
 
     function isLikelyUsTicker(item) {
@@ -506,42 +589,62 @@
 
     async function fetchExchangeRates() {
       const status = document.getElementById("fxStatus");
-      status.textContent = "更新匯率中...";
+      const updatedAtElement = document.getElementById("fxUpdatedAt");
+      const rateDateElement = document.getElementById("fxRateDate");
 
-      let successCount = 0;
-      let failCount = 0;
+      status.textContent = "更新每日參考匯率中...";
 
-      fxRates.TWD = 1;
+      const targetCurrencies = currencies.filter(currency => currency !== "TWD");
 
-      for (const currency of currencies) {
-        if (currency === "TWD") continue;
+      try {
+        const url = `https://api.frankfurter.dev/v2/rates?base=TWD&quotes=${targetCurrencies.join(",")}`;
+        const response = await fetch(url);
 
-        try {
-          const url = `https://api.frankfurter.dev/v2/rate/${currency}/TWD`;
-          const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error("匯率 API 回應失敗");
+        }
 
-          if (!response.ok) {
-            throw new Error("匯率 API 回應失敗");
-          }
+        const data = await response.json();
 
-          const data = await response.json();
+        if (!data || !data.rates) {
+          throw new Error("匯率資料格式不正確");
+        }
 
-          if (data && data.rate) {
-            fxRates[currency] = Number(data.rate);
+        fxRates.TWD = 1;
+
+        let successCount = 0;
+        let failCount = 0;
+
+        targetCurrencies.forEach(currency => {
+          const rateFromTwd = Number(data.rates[currency]);
+
+          if (rateFromTwd > 0) {
+            fxRates[currency] = 1 / rateFromTwd;
             successCount += 1;
           } else {
             failCount += 1;
           }
-        } catch (error) {
-          failCount += 1;
-        }
+        });
+
+        const updatedAt = new Date().toLocaleString("zh-TW", {
+          hour12: false
+        });
+
+        const rateDate = data.date || "未知";
+
+        localStorage.setItem(FX_UPDATED_AT_KEY, updatedAt);
+        localStorage.setItem(FX_RATE_DATE_KEY, rateDate);
+
+        saveFxRates();
+        renderFxTable();
+        render();
+
+        status.textContent = `每日參考匯率更新完成：成功 ${successCount} 個，失敗 ${failCount} 個。`;
+        rateDateElement.textContent = `匯率資料日期：${rateDate}`;
+        updatedAtElement.textContent = `本機更新時間：${updatedAt}`;
+      } catch (error) {
+        status.textContent = "匯率更新失敗。請稍後再試，或展開下方匯率表手動調整。";
       }
-
-      saveFxRates();
-      renderFxTable();
-      render();
-
-      status.textContent = `匯率更新完成：成功 ${successCount} 個，失敗 ${failCount} 個。`;
     }
 
     async function updateUsStockPrices() {
@@ -582,6 +685,7 @@
           if (price > 0) {
             item.price = price;
             item.currency = "USD";
+            item.amount = Number(item.quantity || 0) > 0 ? Number(item.quantity) * price : price;
             item.updatedAt = new Date().toISOString();
             successCount += 1;
           } else {
@@ -600,6 +704,20 @@
 
     function render() {
       renderFxTable();
+
+      const savedFxUpdatedAt = localStorage.getItem(FX_UPDATED_AT_KEY);
+      const savedFxRateDate = localStorage.getItem(FX_RATE_DATE_KEY);
+
+      const fxUpdatedAtElement = document.getElementById("fxUpdatedAt");
+      const fxRateDateElement = document.getElementById("fxRateDate");
+
+      if (fxUpdatedAtElement && savedFxUpdatedAt) {
+        fxUpdatedAtElement.textContent = `本機更新時間：${savedFxUpdatedAt}`;
+      }
+
+      if (fxRateDateElement && savedFxRateDate) {
+        fxRateDateElement.textContent = `匯率資料日期：${savedFxRateDate}`;
+      }
 
       const totalAssets = items
         .filter(item => item.category !== "負債")
@@ -629,9 +747,13 @@
           ? Math.max(twdValue, 0) / totalAssets * 100
           : 0;
 
-        if (ratio > maxRatio) maxRatio = ratio;
+        if (ratio > maxRatio) {
+          maxRatio = ratio;
+        }
 
         const isOverLimit = item.category !== "負債" && ratio > singleLimit;
+
+        const twdValueClass = twdValue < 0 ? "negative" : "positive";
 
         const row = document.createElement("tr");
 
@@ -642,8 +764,8 @@
           <td>${item.currency}</td>
           <td>${formatNumber(item.quantity, 4)}</td>
           <td>${formatNumber(item.price, 4)}</td>
-          <td>${formatNumber(item.category === "負債" ? -Math.abs(originalAmount) : originalAmount, 2)}</td>
-          <td>${formatCurrency(twdValue)}</td>
+          <td>${formatOriginalCurrency(item.category === "負債" ? -Math.abs(originalAmount) : originalAmount, item.currency)}</td>
+          <td class="${twdValueClass}">${formatCurrency(twdValue)}</td>
           <td>${ratio.toFixed(1)}%</td>
           <td>${item.note || ""}</td>
           <td>
@@ -777,8 +899,10 @@
       });
 
       saveItems();
+
       form.reset();
       document.getElementById("currency").value = "TWD";
+
       render();
     });
 
