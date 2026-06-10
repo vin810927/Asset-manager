@@ -1,58 +1,135 @@
-# Asset-manager
+# Asset Agent
 
-# 個人資產管理 Dashboard
+個人資產管理與理財輔助工具 starter project。
 
-這是一個純前端的個人資產管理工具，目標是協助追蹤資產、負債、持股曝險與資產配置比例。
+此專案目標是建立一個可逐步演進的資產管理 App，讓使用者能定期匯入資產數值，彙整現金、股票、基金、貸款與其他資產，未來可接上 Supabase、匯率、股價 API 與 AI 輔助分析。
 
 ## 目前功能
 
-- 新增資產與負債項目
-- 自動計算總資產、總負債、淨資產
-- 計算各資產類別比重
-- 偵測單一標的是否超過設定上限
-- 產生簡單再平衡提醒
-- 使用瀏覽器 localStorage 儲存資料
-- 不需要後端、不需要資料庫
+- 使用 React + Vite 建立前端專案
+- 使用 `localStorage` 儲存資料，不需後端
+- 支援資產類型：
+  - 現金
+  - 股票
+  - 基金
+  - 貸款
+  - 其他
+- 新增股票時只需輸入：
+  - 股票代號
+  - 股數
+  - 購入價格
+  - 購入日期
+  - 幣別
+- 同一股票代號會在總覽中合併顯示
+- 股票分次購入資料保留在明細中，可展開查看
+- 新增貸款時需輸入：
+  - 貸款名稱
+  - 本金
+  - 年限
+  - 利率
+  - 起始日期
+  - 幣別
+- 頁面採精簡單頁設計，減少捲動需求
 
-## 使用方式
+## 技術棧
 
-1. 開啟 `index.html`
-2. 輸入資產或負債資料
-3. 點選「新增」
-4. Dashboard 會自動更新
+- Vite
+- React
+- JavaScript
+- localStorage
+- CSS Modules-free plain CSS
 
-## 資料安全
+## 安裝與啟動
 
-目前所有資料都儲存在使用者自己的瀏覽器 localStorage 中。
+```bash
+npm install
+npm run dev
+```
 
-資料不會上傳到任何伺服器。
+打包：
 
-若清除瀏覽器資料，內容可能會遺失。
+```bash
+npm run build
+```
 
-## 適合部署方式
+預覽 production build：
 
-可直接使用 GitHub Pages 部署。
+```bash
+npm run preview
+```
 
-## 後續規劃
+## 專案結構
 
-- 匯入 CSV / Excel
-- 自動抓取股價
-- 加入資產配置目標
-- 加入 AI 月報
-- Supabase 雲端同步
-- 串接券商或帳單資料
+```text
+asset-agent/
+  README.md
+  TODO.md
+  decisions.md
+  AGENTS.md
+  package.json
+  index.html
+  src/
+    App.jsx
+    main.jsx
+    styles.css
+    utils.js
+```
 
-## v0.2 更新
+## 資料模型概念
 
-- 支援多幣別資產
-- 常用幣別包含 TWD、USD、JPY、EUR、GBP、AUD、CAD、CHF、HKD、SGD、CNY、KRW、NZD
-- 股票、ETF 可輸入股數與每股 / 每單位現值
-- 自動折算為新臺幣資產價值
-- 可透過 Frankfurter API 更新最新參考匯率
-- 匯率可手動覆寫，避免 API 無法連線時無法估值
+目前所有資產以單一陣列儲存在 `localStorage`：
 
-## 注意事項
+```js
+{
+  id: string,
+  type: "cash" | "stock" | "fund" | "loan" | "other",
+  currency: "TWD" | "USD" | "JPY",
+  createdAt: string,
+  ...
+}
+```
 
-目前匯率為參考匯率，並非銀行實際買入、賣出或券商成交匯率。
+股票資產：
 
-股票與 ETF 的價格目前仍需手動輸入，尚未自動抓取即時股價。
+```js
+{
+  type: "stock",
+  ticker: "2330",
+  shares: 10,
+  buyPrice: 600,
+  buyDate: "2026-06-10",
+  note: ""
+}
+```
+
+貸款：
+
+```js
+{
+  type: "loan",
+  name: "房貸",
+  principal: 10000000,
+  years: 30,
+  annualRate: 2.1,
+  startDate: "2026-06-10",
+  note: ""
+}
+```
+
+## 未來方向
+
+後續可以逐步加入：
+
+- Supabase 後端
+- 使用者登入
+- 匯率 API
+- 股票現價 API
+- 資產淨值走勢圖
+- 定期提醒匯入資產數值
+- AI 理財摘要
+- 多人共同記帳與資產分帳
+- CSV / Excel 匯入匯出
+
+## 安全原則
+
+此工具只作為個人資產紀錄與研究輔助，不應自動下單、轉帳、購買金融商品，亦不應保存密碼、API key、token 或醫療個資。
