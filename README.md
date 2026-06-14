@@ -20,8 +20,14 @@
   - 購入價格
   - 購入日期
   - 幣別
-- 同一股票代號會在總覽中合併顯示
-- 股票分次購入資料保留在明細中，可展開查看
+- 同一股票代號會在明細中合併顯示
+- 股票分次購入資料保留在資產明細中，可展開查看
+- 資產總覽提供大類圓餅圖，可點選股票、現金等大類查看類別內佔比
+- 同類型、同幣別、同名稱的非股票資產會合併顯示，明細仍可展開查看
+- 資產明細可依類型篩選，例如只看股票、現金、基金或貸款
+- 貸款會依本金、年限、利率與起始日期估算月付金、已繳比例與剩餘本金
+- 可按需更新公開匯率，並以 TWD 估算跨幣別淨資產
+- 支援手動編輯匯率，方便在公開資料延遲或需要保守估值時覆寫
 - 新增貸款時需輸入：
   - 貸款名稱
   - 本金
@@ -77,7 +83,17 @@ asset-agent/
 
 ## 資料模型概念
 
-目前所有資產以單一陣列儲存在 `localStorage`：
+目前所有資產以 versioned store 儲存在 `localStorage`：
+
+```js
+{
+  schemaVersion: 1,
+  updatedAt: "2026-06-11T00:00:00.000Z",
+  assets: []
+}
+```
+
+每筆資產仍維持下列概念：
 
 ```js
 {
@@ -86,6 +102,26 @@ asset-agent/
   currency: "TWD" | "USD" | "JPY",
   createdAt: string,
   ...
+}
+```
+
+匯率資料另存在 `asset-agent.exchange-rates.v1`：
+
+```js
+{
+  schemaVersion: 1,
+  baseCurrency: "TWD",
+  provider: "ExchangeRate-API Open Access",
+  fetchedAt: "2026-06-14T10:00:00.000Z",
+  sourceUpdatedAt: "Sun, 14 Jun 2026 00:02:31 +0000",
+  rates: {
+    USD: {
+      currency: "USD",
+      rateToTwd: 31.6,
+      source: "api",
+      updatedAt: "2026-06-14T10:00:00.000Z"
+    }
+  }
 }
 ```
 
