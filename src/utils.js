@@ -30,6 +30,22 @@ export function formatMoney(value, currency = "TWD") {
   return `${currency} ${formatNumber(number)}`;
 }
 
+export function formatCompactMoney(value, currency = "TWD") {
+  const number = Number(value || 0);
+  const absoluteNumber = Math.abs(number);
+  const sign = number < 0 ? "-" : "";
+
+  if (absoluteNumber >= 100000000) {
+    return `${currency} ${sign}${formatNumber(absoluteNumber / 100000000)}億`;
+  }
+
+  if (absoluteNumber >= 1000000) {
+    return `${currency} ${sign}${formatNumber(absoluteNumber / 10000)}萬`;
+  }
+
+  return formatMoney(number, currency);
+}
+
 export function formatRate(value) {
   const number = Number(value || 0);
   return new Intl.NumberFormat("zh-TW", {
