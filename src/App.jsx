@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ASSET_TYPES,
   CURRENCIES,
+  buildAttentionItems,
+  createBackupPayload,
   createAssetId,
   fetchLatestExchangeRates,
   formatCompactMoney,
@@ -11,14 +13,22 @@ import {
   formatRate,
   getAssetDisplayName,
   getAssetTypeLabel,
+  getAssetUpdatedAt,
+  getConcentrationItems,
+  getLatestUpdatedAt,
   getLoanSnapshot,
+  getMarketPriceGapPercent,
   getRateToTwd,
+  getStockTickerCurrencySuggestion,
   groupNonStockAssets,
   groupStockHoldings,
   loadAssets,
   loadExchangeRates,
+  loadFinancialGoals,
+  parseBackupPayload,
   saveAssets,
   saveExchangeRates,
+  saveFinancialGoals,
   setManualExchangeRate,
   summarizeByCurrency,
   summarizeInBaseCurrency,
@@ -38,6 +48,8 @@ function createEmptyForm(type = "cash") {
     ticker: "",
     shares: "",
     buyPrice: "",
+    marketPrice: "",
+    marketPriceUpdatedAt: getTodayDate(),
     buyDate: getTodayDate(),
     principal: "",
     years: "",
@@ -61,6 +73,8 @@ function createFormFromAsset(asset) {
     ticker: toFormValue(asset.ticker),
     shares: toFormValue(asset.shares),
     buyPrice: toFormValue(asset.buyPrice),
+    marketPrice: toFormValue(asset.marketPrice),
+    marketPriceUpdatedAt: asset.marketPriceUpdatedAt ? String(asset.marketPriceUpdatedAt).slice(0, 10) : getTodayDate(),
     buyDate: asset.buyDate || getTodayDate(),
     principal: toFormValue(asset.principal),
     years: toFormValue(asset.years),
@@ -77,18 +91,26 @@ function buildAssetFromForm(form, existingAsset = null) {
     currency: form.currency,
     note: form.note.trim(),
     createdAt: existingAsset?.createdAt ?? new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
 
   if (form.type === "stock") {
     if (!form.ticker.trim()) throw new Error("請輸入股票代號。");
     if (toNumber(form.shares) <= 0) throw new Error("請輸入有效股數。");
     if (toNumber(form.buyPrice) < 0) throw new Error("請輸入有效購入價格。");
+    if (form.marketPrice && toNumber(form.marketPrice) < 0) throw new Error("請輸入有效目前市價。");
 
     return {
       ...base,
       ticker: form.ticker.trim().toUpperCase(),
       shares: toNumber(form.shares),
       buyPrice: toNumber(form.buyPrice),
+      ...(toNumber(form.marketPrice) > 0
+        ? {
+            marketPrice: toNumber(form.marketPrice),
+            marketPriceUpdatedAt: form.marketPriceUpdatedAt || new Date().toISOString(),
+          }
+        : {}),
       buyDate: form.buyDate,
     };
   }
@@ -121,6 +143,17 @@ function buildAssetFromForm(form, existingAsset = null) {
 }
 
 function AssetFormFields({ form, onFieldChange, onTypeChange }) {
+  function handleTickerChange(value) {
+    const previousSuggestion = getStockTickerCurrencySuggestion(form.ticker);
+    const nextSuggestion = getStockTickerCurrencySuggestion(value);
+
+    onFieldChange("ticker", value);
+
+    if (nextSuggestion && (!previousSuggestion || form.currency === previousSuggestion)) {
+      onFieldChange("currency", nextSuggestion);
+    }
+  }
+
   return (
     <>
       <div className="form-row compact">
@@ -154,7 +187,7 @@ function AssetFormFields({ form, onFieldChange, onTypeChange }) {
               股票代號
               <input
                 value={form.ticker}
-                onChange={(event) => onFieldChange("ticker", event.target.value)}
+                onChange={(event) => handleTickerChange(event.target.value)}
                 placeholder="例如 2330、AAPL"
               />
             </label>
@@ -189,6 +222,28 @@ function AssetFormFields({ form, onFieldChange, onTypeChange }) {
                 value={form.buyPrice}
                 onChange={(event) => onFieldChange("buyPrice", event.target.value)}
                 placeholder="每股價格"
+              />
+            </label>
+          </div>
+
+          <div className="form-row compact">
+            <label>
+              目前市價（選填）
+              <input
+                type="number"
+                min="0"
+                step="0.0001"
+                value={form.marketPrice}
+                onChange={(event) => onFieldChange("marketPrice", event.target.value)}
+                placeholder="用於資料確認"
+              />
+            </label>
+            <label>
+              市價日期
+              <input
+                type="date"
+                value={form.marketPriceUpdatedAt}
+                onChange={(event) => onFieldChange("marketPriceUpdatedAt", event.target.value)}
               />
             </label>
           </div>
@@ -298,8 +353,12 @@ const ASSET_SORT_OPTIONS = [
   { value: "currency", label: "幣別" },
   { value: "name", label: "名稱" },
 ];
-const STALE_EXCHANGE_RATE_DAYS = 7;
-const STALE_ASSET_DATA_DAYS = 30;
+const ASSET_STATUS_FILTER_OPTIONS = [
+  { value: "all", label: "全部狀態" },
+  { value: "asset", label: "正資產" },
+  { value: "liability", label: "負債" },
+  { value: "missing-rate", label: "缺匯率" },
+];
 
 function loadStyleMode() {
   try {
@@ -317,32 +376,80 @@ function getTextDensityClass(value) {
   return "";
 }
 
-function getDaysSince(value) {
-  if (!value) return null;
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-
-  return Math.floor((Date.now() - date.getTime()) / 86400000);
-}
-
-function getLatestAssetTimestamp(assets) {
-  return Math.max(
-    0,
-    ...assets.map((asset) => {
-      const rawDate = asset.type === "stock" ? asset.buyDate : asset.type === "loan" ? asset.startDate : asset.createdAt;
-      const timestamp = new Date(rawDate || asset.createdAt || 0).getTime();
-      return Number.isNaN(timestamp) ? 0 : timestamp;
-    }),
-  );
-}
-
 function compareText(a, b) {
   return String(a || "").localeCompare(String(b || ""), "zh-Hant", { numeric: true });
 }
 
+function normalizeSearchQuery(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getAssetSearchText(asset) {
+  return normalizeSearchQuery(
+    [
+      getAssetDisplayName(asset),
+      getAssetTypeLabel(asset.type),
+      asset.currency,
+      asset.note,
+      asset.ticker,
+      asset.name,
+      asset.buyDate,
+      asset.startDate,
+      asset.createdAt,
+      asset.updatedAt,
+      asset.amount,
+      asset.shares,
+      asset.buyPrice,
+      asset.marketPrice,
+      asset.marketPriceUpdatedAt,
+      asset.principal,
+      asset.years,
+      asset.annualRate,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+}
+
+function groupMatchesSearch(group, query) {
+  if (!query) return true;
+
+  const groupText = normalizeSearchQuery(
+    [
+      group.name,
+      group.typeLabel,
+      getAssetTypeLabel(group.type),
+      group.currency,
+      group.amountText,
+      group.primaryText,
+      group.secondaryText,
+      group.updatedAt,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+
+  return groupText.includes(query);
+}
+
+function groupMatchesStatus(group, statusFilter) {
+  if (statusFilter === "all") return true;
+  if (statusFilter === "missing-rate") return group.baseValue === null || group.hasMissingRate;
+  if (statusFilter === "liability") return group.type === "loan" || (group.baseValue ?? group.totalAmount ?? 0) < 0;
+  if (statusFilter === "asset") return group.type !== "loan" && (group.baseValue ?? group.totalAmount ?? 0) >= 0;
+  return true;
+}
+
+function formatUpdatedAt(value) {
+  return `更新 ${formatDateTime(value)}`;
+}
+
+function getBackupFileName() {
+  return `asset-agent-backup-${new Date().toISOString().slice(0, 10)}.json`;
+}
+
 function getAssetSortTimestamp(asset) {
-  const dateValue = asset.type === "stock" ? asset.buyDate : asset.type === "loan" ? asset.startDate : asset.createdAt;
+  const dateValue = asset.updatedAt || (asset.type === "stock" ? asset.buyDate : asset.type === "loan" ? asset.startDate : asset.createdAt);
   const timestamp = new Date(dateValue || asset.createdAt || 0).getTime();
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
@@ -408,20 +515,28 @@ function sortAssetEntries(entries, sortMode) {
 function App() {
   const [assets, setAssets] = useState(() => loadAssets());
   const [exchangeRates, setExchangeRates] = useState(() => loadExchangeRates());
+  const [financialGoals, setFinancialGoals] = useState(() => loadFinancialGoals());
   const [exchangeRateDrafts, setExchangeRateDrafts] = useState({});
   const [exchangeRateStatus, setExchangeRateStatus] = useState("");
   const [isFetchingRates, setIsFetchingRates] = useState(false);
   const [isExchangePanelOpen, setIsExchangePanelOpen] = useState(false);
   const [isAssetFormOpen, setIsAssetFormOpen] = useState(false);
+  const [isCurrencyBreakdownOpen, setIsCurrencyBreakdownOpen] = useState(false);
+  const [isDataToolsOpen, setIsDataToolsOpen] = useState(false);
+  const [dataToolStatus, setDataToolStatus] = useState("");
   const [form, setForm] = useState(() => createEmptyForm());
   const [editForm, setEditForm] = useState(() => createEmptyForm());
   const [editingAssetId, setEditingAssetId] = useState(null);
   const [assetToDeleteId, setAssetToDeleteId] = useState(null);
   const [expandedAssetGroups, setExpandedAssetGroups] = useState({});
+  const [assetSearchQuery, setAssetSearchQuery] = useState("");
   const [assetTypeFilter, setAssetTypeFilter] = useState("all");
+  const [assetCurrencyFilter, setAssetCurrencyFilter] = useState("all");
+  const [assetStatusFilter, setAssetStatusFilter] = useState("all");
   const [assetSortMode, setAssetSortMode] = useState("value");
   const [styleMode, setStyleMode] = useState(() => loadStyleMode());
   const [selectedOverviewKey, setSelectedOverviewKey] = useState(null);
+  const importFileInputRef = useRef(null);
 
   useEffect(() => {
     saveAssets(assets);
@@ -435,6 +550,10 @@ function App() {
   useEffect(() => {
     saveExchangeRates(exchangeRates);
   }, [exchangeRates]);
+
+  useEffect(() => {
+    saveFinancialGoals(financialGoals);
+  }, [financialGoals]);
 
   const stockHoldings = useMemo(() => groupStockHoldings(assets), [assets]);
   const currencySummary = useMemo(() => summarizeByCurrency(assets), [assets]);
@@ -470,6 +589,7 @@ function App() {
           baseValue: rateToTwd ? holding.totalCost * rateToTwd : null,
           primaryText: `${formatNumber(holding.totalShares)} 股`,
           secondaryText: `均價 ${formatMoney(holding.averageCost, holding.currency)}`,
+          updatedAt: getLatestUpdatedAt(holding.lots),
           count: holding.lots.length,
           entries: holding.lots,
         };
@@ -502,6 +622,7 @@ function App() {
           baseValue: rateToTwd ? group.totalAmount * rateToTwd : null,
           primaryText: isLoan ? `月付 ${formatMoney(monthlyPaymentTotal, group.currency)}` : amountText,
           secondaryText: `${group.entries.length} 筆明細${isLoan ? " · 依剩餘本金估算" : ""}`,
+          updatedAt: getLatestUpdatedAt(group.entries),
           count: group.entries.length,
           entries: group.entries,
         };
@@ -516,6 +637,10 @@ function App() {
     [otherDetailGroups, stockDetailGroups],
   );
   const assetTypeFilters = useMemo(() => [{ value: "all", label: "全部" }, ...ASSET_TYPES], []);
+  const assetCurrencyOptions = useMemo(
+    () => ["all", ...new Set(assetDetailGroups.map((group) => group.currency).filter(Boolean))],
+    [assetDetailGroups],
+  );
   const assetTypeCounts = useMemo(() => {
     const counts = { all: assets.length };
 
@@ -526,14 +651,33 @@ function App() {
     return counts;
   }, [assets]);
   const filteredAssetGroups = useMemo(() => {
-    if (assetTypeFilter === "all") return assetDetailGroups;
-    return assetDetailGroups.filter((group) => group.type === assetTypeFilter);
-  }, [assetDetailGroups, assetTypeFilter]);
+    const query = normalizeSearchQuery(assetSearchQuery);
+
+    return assetDetailGroups.flatMap((group) => {
+      if (assetTypeFilter !== "all" && group.type !== assetTypeFilter) return [];
+      if (assetCurrencyFilter !== "all" && group.currency !== assetCurrencyFilter) return [];
+      if (!groupMatchesStatus(group, assetStatusFilter)) return [];
+
+      if (!query) return [group];
+
+      const matchesGroup = groupMatchesSearch(group, query);
+      const entries = matchesGroup
+        ? group.entries
+        : group.entries.filter((asset) => getAssetSearchText(asset).includes(query));
+
+      return entries.length > 0 ? [{ ...group, entries }] : [];
+    });
+  }, [assetCurrencyFilter, assetDetailGroups, assetSearchQuery, assetStatusFilter, assetTypeFilter]);
   const sortedAssetGroups = useMemo(
     () => sortAssetGroups(filteredAssetGroups, assetSortMode),
     [assetSortMode, filteredAssetGroups],
   );
   const filteredAssetCount = filteredAssetGroups.reduce((total, group) => total + group.entries.length, 0);
+  const isAssetFilterActive =
+    normalizeSearchQuery(assetSearchQuery) !== "" ||
+    assetTypeFilter !== "all" ||
+    assetCurrencyFilter !== "all" ||
+    assetStatusFilter !== "all";
   const assetOverviewGroups = useMemo(() => {
     const groups = new Map();
 
@@ -547,6 +691,7 @@ function App() {
         count: 0,
         detailGroups: [],
         hasMissingRate: false,
+        updatedAt: null,
       };
 
       if (detailGroup.baseValue === null) {
@@ -557,6 +702,9 @@ function App() {
 
       current.count += detailGroup.count;
       current.detailGroups.push(detailGroup);
+      if (!current.updatedAt || new Date(detailGroup.updatedAt).getTime() > new Date(current.updatedAt).getTime()) {
+        current.updatedAt = detailGroup.updatedAt;
+      }
       groups.set(detailGroup.type, current);
     }
 
@@ -603,88 +751,14 @@ function App() {
       .sort((a, b) => b.value - a.value);
   }, [assetOverviewGroups]);
   const allocationTotal = allocationItems.reduce((total, item) => total + item.value, 0);
-  const concentrationItems = useMemo(() => {
-    const items = stockHoldings.map((holding) => {
-      const rateToTwd = getRateToTwd(exchangeRates, holding.currency);
-      const valueTwd = rateToTwd ? holding.totalCost * rateToTwd : null;
-
-      return {
-        key: holding.key,
-        ticker: holding.ticker,
-        currency: holding.currency,
-        valueTwd,
-        totalShares: holding.totalShares,
-        totalCost: holding.totalCost,
-      };
-    });
-    const totalStockValue = items.reduce((total, item) => total + (item.valueTwd ?? 0), 0);
-
-    return items
-      .map((item) => {
-        const stockSharePercent =
-          item.valueTwd !== null && totalStockValue > 0 ? (item.valueTwd / totalStockValue) * 100 : null;
-        const totalAssetPercent =
-          item.valueTwd !== null && twdSummary.assets > 0 ? (item.valueTwd / twdSummary.assets) * 100 : null;
-
-        return {
-          ...item,
-          stockSharePercent,
-          totalAssetPercent,
-          isWarning: totalAssetPercent !== null && totalAssetPercent > 20,
-        };
-      })
-      .sort((a, b) => (b.valueTwd ?? -1) - (a.valueTwd ?? -1));
-  }, [exchangeRates, stockHoldings, twdSummary.assets]);
-  const attentionItems = useMemo(() => {
-    const items = [];
-
-    if (assets.length === 0) {
-      items.push({ key: "empty", label: "尚未建立任何資產資料" });
-    }
-
-    if (twdSummary.missingCurrencies.length > 0) {
-      items.push({
-        key: "missing-rates",
-        label: `缺少 ${twdSummary.missingCurrencies.join(", ")} 匯率，部分估值未納入 TWD 淨值`,
-      });
-    }
-
-    const exchangeRateAge = getDaysSince(exchangeRates.sourceUpdatedAt || exchangeRates.fetchedAt);
-    if (exchangeRateAge !== null && exchangeRateAge > STALE_EXCHANGE_RATE_DAYS) {
-      items.push({ key: "stale-rates", label: `匯率資料已超過 ${exchangeRateAge} 天未更新` });
-    }
-
-    const latestAssetTimestamp = getLatestAssetTimestamp(assets);
-    const assetDataAge = latestAssetTimestamp > 0 ? getDaysSince(new Date(latestAssetTimestamp).toISOString()) : null;
-    if (assetDataAge !== null && assetDataAge > STALE_ASSET_DATA_DAYS) {
-      items.push({ key: "stale-assets", label: `最近一筆資產資料距今 ${assetDataAge} 天` });
-    }
-
-    const concentratedItems = concentrationItems.filter((item) => item.isWarning);
-    if (concentratedItems.length > 0) {
-      items.push({
-        key: "concentration",
-        label: `${concentratedItems[0].ticker} 占總資產超過 20%，建議人工檢視集中度`,
-      });
-    }
-
-    if (twdSummary.assets > 0 && twdSummary.liabilities / twdSummary.assets > 0.5) {
-      items.push({
-        key: "liability-ratio",
-        label: `負債約占總資產 ${formatNumber((twdSummary.liabilities / twdSummary.assets) * 100)}%`,
-      });
-    }
-
-    return items;
-  }, [
-    assets,
-    concentrationItems,
-    exchangeRates.fetchedAt,
-    exchangeRates.sourceUpdatedAt,
-    twdSummary.assets,
-    twdSummary.liabilities,
-    twdSummary.missingCurrencies,
-  ]);
+  const concentrationItems = useMemo(
+    () => getConcentrationItems({ assets, exchangeRates, financialGoals }),
+    [assets, exchangeRates, financialGoals],
+  );
+  const attentionItems = useMemo(
+    () => buildAttentionItems({ assets, exchangeRates, financialGoals }),
+    [assets, exchangeRates, financialGoals],
+  );
 
   useEffect(() => {
     if (assetOverviewGroups.length === 0) {
@@ -700,6 +774,60 @@ function App() {
   function selectOverviewGroup(group) {
     setSelectedOverviewKey(group.key);
     setAssetTypeFilter(group.type);
+  }
+
+  function resetAssetFilters() {
+    setAssetSearchQuery("");
+    setAssetTypeFilter("all");
+    setAssetCurrencyFilter("all");
+    setAssetStatusFilter("all");
+    setAssetSortMode("value");
+  }
+
+  function getProjectedConcentrationWarning(asset, existingAsset = null) {
+    if (asset.type !== "stock") return null;
+
+    const projectedAssets = existingAsset
+      ? assets.map((item) => (item.id === existingAsset.id ? asset : item))
+      : [asset, ...assets];
+    const projectedSummary = summarizeInBaseCurrency(summarizeByCurrency(projectedAssets), exchangeRates);
+    const holding = groupStockHoldings(projectedAssets).find(
+      (item) => item.ticker === asset.ticker && item.currency === asset.currency,
+    );
+    const rateToTwd = getRateToTwd(exchangeRates, asset.currency);
+    const valueTwd = holding && rateToTwd ? holding.totalCost * rateToTwd : null;
+
+    if (!valueTwd || projectedSummary.assets <= 0) return null;
+
+    const percent = (valueTwd / projectedSummary.assets) * 100;
+    if (percent <= financialGoals.singleHoldingLimitPercent) return null;
+
+    return `${asset.ticker} 儲存後約占總資產 ${formatNumber(percent)}%，高於單一標的上限 ${formatNumber(
+      financialGoals.singleHoldingLimitPercent,
+    )}%。`;
+  }
+
+  function confirmAssetWarnings(asset, existingAsset = null) {
+    const warnings = [];
+
+    if (asset.type === "stock") {
+      const suggestedCurrency = getStockTickerCurrencySuggestion(asset.ticker);
+      if (suggestedCurrency && asset.currency !== suggestedCurrency) {
+        warnings.push(`股票代號 ${asset.ticker} 看起來較像 ${suggestedCurrency} 標的，目前幣別為 ${asset.currency}。`);
+      }
+
+      const priceGapPercent = getMarketPriceGapPercent(asset);
+      if (priceGapPercent !== null && priceGapPercent > 80) {
+        warnings.push(`股票 ${asset.ticker} 的成本單價與目前市價差距 ${formatNumber(priceGapPercent)}%，請確認資料。`);
+      }
+
+      const concentrationWarning = getProjectedConcentrationWarning(asset, existingAsset);
+      if (concentrationWarning) warnings.push(concentrationWarning);
+    }
+
+    if (warnings.length === 0) return true;
+
+    return window.confirm(`資料確認提示：\n\n${warnings.map((warning) => `- ${warning}`).join("\n")}\n\n仍要儲存？`);
   }
 
   function getExchangeRateDraft(currency) {
@@ -750,6 +878,7 @@ function App() {
 
     try {
       const asset = buildAssetFromForm(form);
+      if (!confirmAssetWarnings(asset)) return;
       setAssets((current) => [asset, ...current]);
       resetForm(form.type);
       setIsAssetFormOpen(false);
@@ -769,6 +898,7 @@ function App() {
 
     try {
       const asset = buildAssetFromForm(editForm, editingAsset);
+      if (!confirmAssetWarnings(asset, editingAsset)) return;
       setAssets((current) => current.map((item) => (item.id === editingAsset.id ? asset : item)));
       cancelEditing();
     } catch (error) {
@@ -858,6 +988,56 @@ function App() {
     setExchangeRateStatus(`${currency} 匯率已手動更新。`);
   }
 
+  function updateFinancialGoal(field, value) {
+    const numberValue = toNumber(value);
+
+    setFinancialGoals((current) => ({
+      ...current,
+      [field]: field === "staleAssetDays" ? Math.max(1, numberValue) : Math.max(0, numberValue),
+    }));
+  }
+
+  function exportJsonData() {
+    const payload = createBackupPayload({
+      assets,
+      exchangeRates,
+      financialGoals,
+      lastCheckedAt: new Date().toISOString(),
+    });
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+
+    anchor.href = url;
+    anchor.download = getBackupFileName();
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setDataToolStatus(`已匯出 ${payload.assets.length} 筆資產資料。`);
+  }
+
+  async function importJsonData(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const payload = parseBackupPayload(JSON.parse(await file.text()));
+
+      setAssets(payload.assets);
+      setExchangeRates(payload.exchangeRates);
+      setFinancialGoals(payload.financialGoals);
+      setExpandedAssetGroups({});
+      setSelectedOverviewKey(null);
+      cancelEditing();
+      cancelDeleteAsset();
+      resetAssetFilters();
+      setDataToolStatus(`匯入成功：${payload.assets.length} 筆資產資料已載入。`);
+    } catch (error) {
+      setDataToolStatus(error.message || "匯入失敗：檔案格式不正確。");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
   function toggleAssetGroup(key) {
     setExpandedAssetGroups((current) => ({
       ...current,
@@ -906,6 +1086,38 @@ function App() {
               <dd>{formatMoney(twdSummary.liabilities, "TWD")}</dd>
             </div>
           </dl>
+
+          <div className="currency-breakdown">
+            <button
+              className="currency-breakdown-toggle"
+              type="button"
+              aria-expanded={isCurrencyBreakdownOpen}
+              onClick={() => setIsCurrencyBreakdownOpen((current) => !current)}
+            >
+              <span>幣別淨值</span>
+              <small>{currencySummary.length === 0 ? "尚無資料" : `${currencySummary.length} 個幣別`}</small>
+              <span className="expand-indicator">{isCurrencyBreakdownOpen ? "⌃" : "⌄"}</span>
+            </button>
+
+            {isCurrencyBreakdownOpen && (
+              <div className="currency-breakdown-list">
+                {currencySummary.length === 0 ? (
+                  <p className="muted">尚無幣別資料。</p>
+                ) : (
+                  currencySummary.map((item) => (
+                    <article className="currency-mini-card" key={item.currency}>
+                      <span>{item.currency} 幣別淨值</span>
+                      <strong>{formatMoney(item.net, item.currency)}</strong>
+                      <small>
+                        資產 {formatMoney(item.assets, item.currency)} · 負債{" "}
+                        {formatMoney(item.liabilities, item.currency)}
+                      </small>
+                    </article>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         </article>
 
         <article className="panel attention-panel">
@@ -923,26 +1135,6 @@ function App() {
             </ul>
           )}
         </article>
-      </section>
-
-      <section className="currency-strip" aria-label="幣別淨值">
-        {currencySummary.length === 0 ? (
-          <article className="summary-card currency-card empty">
-            <span>幣別淨值</span>
-            <strong>尚無資料</strong>
-          </article>
-        ) : (
-          currencySummary.map((item) => (
-            <article className="summary-card currency-card" key={item.currency}>
-              <span>{item.currency} 幣別淨值</span>
-              <strong>{formatMoney(item.net, item.currency)}</strong>
-              <small>
-                資產 {formatMoney(item.assets, item.currency)} · 負債{" "}
-                {formatMoney(item.liabilities, item.currency)}
-              </small>
-            </article>
-          ))
-        )}
       </section>
 
       <section className="exchange-shell">
@@ -1133,7 +1325,8 @@ function App() {
                           <strong>{group.name}</strong>
                         </div>
                         <small>
-                          {group.groupCount} 組 · {group.count} 筆明細{group.hasMissingRate ? " · 缺匯率" : ""}
+                          {group.groupCount} 組 · {group.count} 筆明細{group.hasMissingRate ? " · 缺匯率" : ""} ·{" "}
+                          {formatUpdatedAt(group.updatedAt)}
                         </small>
                         <div className="summary-card-bottomline">
                           <span>{percent > 0 ? `${formatNumber(percent)}%` : "未列入配置"}</span>
@@ -1173,7 +1366,7 @@ function App() {
                           {item.currency} · {formatNumber(item.totalShares)} 股
                         </small>
                       </div>
-                      {item.isWarning && <span className="risk-pill">集中</span>}
+                      {item.isWarning && <span className="risk-pill">高集中</span>}
                     </div>
                     <div className="risk-metrics">
                       <div>
@@ -1205,6 +1398,40 @@ function App() {
               {filteredAssetGroups.length} 組 · {filteredAssetCount} 筆
             </span>
           </div>
+        </div>
+
+        <div className="asset-filter-toolbar" aria-label="資產明細搜尋與篩選">
+          <label className="search-control">
+            搜尋
+            <input
+              value={assetSearchQuery}
+              onChange={(event) => setAssetSearchQuery(event.target.value)}
+              placeholder="名稱、代號、備註、日期"
+            />
+          </label>
+
+          <label className="inline-control">
+            幣別
+            <select value={assetCurrencyFilter} onChange={(event) => setAssetCurrencyFilter(event.target.value)}>
+              {assetCurrencyOptions.map((currency) => (
+                <option key={currency} value={currency}>
+                  {currency === "all" ? "全部幣別" : currency}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="inline-control">
+            狀態
+            <select value={assetStatusFilter} onChange={(event) => setAssetStatusFilter(event.target.value)}>
+              {ASSET_STATUS_FILTER_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <label className="inline-control">
             排列
             <select value={assetSortMode} onChange={(event) => setAssetSortMode(event.target.value)}>
@@ -1215,6 +1442,12 @@ function App() {
               ))}
             </select>
           </label>
+
+          {isAssetFilterActive && (
+            <button className="small-action filter-reset-button" type="button" onClick={resetAssetFilters}>
+              重設
+            </button>
+          )}
         </div>
 
         <div className="type-filter" role="group" aria-label="資產類型篩選">
@@ -1234,9 +1467,11 @@ function App() {
         <div className="table-like">
           {sortedAssetGroups.length === 0 ? (
             <p className="muted">
-              {assetTypeFilter === "all"
-                ? "尚無資產資料。"
-                : `尚無${getAssetTypeLabel(assetTypeFilter)}資料。`}
+              {isAssetFilterActive
+                ? "沒有符合搜尋或篩選條件的資產。"
+                : assetTypeFilter === "all"
+                  ? "尚無資產資料。"
+                  : `尚無${getAssetTypeLabel(assetTypeFilter)}資料。`}
             </p>
           ) : (
             sortedAssetGroups.map((group) => (
@@ -1248,7 +1483,7 @@ function App() {
                       {group.name}
                     </strong>
                     <small>
-                      {group.currency} · {group.entries.length} 筆明細
+                      {group.currency} · {group.entries.length} 筆明細 · {formatUpdatedAt(group.updatedAt)}
                     </small>
                   </div>
                   <div>
@@ -1281,8 +1516,12 @@ function App() {
                         : loanSnapshot
                           ? `剩餘 ${formatCompactMoney(loanSnapshot.remainingPrincipal, asset.currency)}`
                           : formatCompactMoney(asset.amountValue, asset.currency);
+                      const marketPriceText =
+                        isStock && toNumber(asset.marketPrice) > 0
+                          ? ` · 市價 ${formatMoney(asset.marketPrice, asset.currency)}`
+                          : "";
                       const detailMeta = isStock
-                        ? `${formatNumber(asset.shares)} 股 · 單價 ${formatMoney(asset.buyPrice, asset.currency)}`
+                        ? `${formatNumber(asset.shares)} 股 · 單價 ${formatMoney(asset.buyPrice, asset.currency)}${marketPriceText}`
                         : loanSnapshot
                           ? `本金 ${formatCompactMoney(asset.principal, asset.currency)} · 月付 ${formatCompactMoney(
                               loanSnapshot.monthlyPayment,
@@ -1299,6 +1538,7 @@ function App() {
                             <span>{asset.currency}</span>
                           </div>
                           <strong title={detailAmount}>{compactDetailAmount}</strong>
+                          <small className="updated-text">{formatUpdatedAt(getAssetUpdatedAt(asset))}</small>
                           <small>{detailMeta}</small>
                           {asset.note && <p>{asset.note}</p>}
                           <div className="detail-actions">
@@ -1320,11 +1560,103 @@ function App() {
         </div>
       </section>
 
-      <section className="data-management" aria-label="資料管理">
-        <span>資料管理</span>
-        <button className="subtle-danger-button" type="button" onClick={clearAll}>
-          清空資料
+      <section className={`panel data-tools-panel${isDataToolsOpen ? " is-open" : ""}`} aria-label="理財目標與備份">
+        <button
+          className="data-tools-toggle"
+          type="button"
+          aria-expanded={isDataToolsOpen}
+          onClick={() => setIsDataToolsOpen((current) => !current)}
+        >
+          <span>理財目標與備份</span>
+          <small>設定提醒門檻、JSON 匯入匯出</small>
+          <span className="expand-indicator">{isDataToolsOpen ? "⌃" : "⌄"}</span>
         </button>
+
+        {isDataToolsOpen && (
+          <div className="data-tools-body">
+            <div className="goal-grid" aria-label="理財目標設定">
+              <label>
+                每月生活費
+                <input
+                  type="number"
+                  min="0"
+                  value={financialGoals.monthlyLivingExpense}
+                  onChange={(event) => updateFinancialGoal("monthlyLivingExpense", toNumber(event.target.value))}
+                />
+              </label>
+              <label>
+                緊急預備金月數
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={financialGoals.emergencyMonths}
+                  onChange={(event) => updateFinancialGoal("emergencyMonths", toNumber(event.target.value))}
+                />
+              </label>
+              <label>
+                單一標的上限 %
+                <input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={financialGoals.singleHoldingLimitPercent}
+                  onChange={(event) => updateFinancialGoal("singleHoldingLimitPercent", toNumber(event.target.value))}
+                />
+              </label>
+              <label>
+                股票總曝險上限 %
+                <input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={financialGoals.stockExposureLimitPercent}
+                  onChange={(event) => updateFinancialGoal("stockExposureLimitPercent", toNumber(event.target.value))}
+                />
+              </label>
+              <label>
+                負債比上限 %
+                <input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={financialGoals.debtRatioLimitPercent}
+                  onChange={(event) => updateFinancialGoal("debtRatioLimitPercent", toNumber(event.target.value))}
+                />
+              </label>
+              <label>
+                幾天沒更新後提醒
+                <input
+                  type="number"
+                  min="1"
+                  value={financialGoals.staleAssetDays}
+                  onChange={(event) => updateFinancialGoal("staleAssetDays", toNumber(event.target.value))}
+                />
+              </label>
+            </div>
+
+            <div className="backup-actions">
+              <button className="ghost-button" type="button" onClick={exportJsonData}>
+                匯出 JSON
+              </button>
+              <button className="ghost-button" type="button" onClick={() => importFileInputRef.current?.click()}>
+                匯入 JSON
+              </button>
+              <input
+                ref={importFileInputRef}
+                className="visually-hidden"
+                type="file"
+                accept="application/json,.json"
+                onChange={importJsonData}
+              />
+              <button className="subtle-danger-button" type="button" onClick={clearAll}>
+                清空資料
+              </button>
+            </div>
+
+            {dataToolStatus && <p className="rate-status">{dataToolStatus}</p>}
+          </div>
+        )}
       </section>
 
       {editingAsset && (

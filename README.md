@@ -22,12 +22,13 @@
   - 幣別
 - 同一股票代號會在明細中合併顯示
 - 股票分次購入資料保留在資產明細中，可展開查看
-- 資產總覽提供大類圓餅圖，可點選股票、現金等大類查看類別內佔比
+- 資產總覽提供配置比例條與分類摘要，可點選股票、現金等大類篩選明細
 - 同類型、同幣別、同名稱的非股票資產會合併顯示，明細仍可展開查看
-- 資產明細可依類型篩選，例如只看股票、現金、基金或貸款
+- 資產明細可依關鍵字、類型、幣別、狀態與排序快速篩選
 - 貸款會依本金、年限、利率與起始日期估算月付金、已繳比例與剩餘本金
 - 可按需更新公開匯率，並以 TWD 估算跨幣別淨資產
 - 支援手動編輯匯率，方便在公開資料延遲或需要保守估值時覆寫
+- 支援本地資料可靠性提醒、理財目標設定與 JSON 匯入匯出備份
 - 新增貸款時需輸入：
   - 貸款名稱
   - 本金
@@ -56,6 +57,12 @@ npm run dev
 
 ```bash
 npm run build
+```
+
+測試：
+
+```bash
+npm test
 ```
 
 預覽 production build：
@@ -101,6 +108,7 @@ asset-agent/
   type: "cash" | "stock" | "fund" | "loan" | "other",
   currency: "TWD" | "USD" | "JPY",
   createdAt: string,
+  updatedAt: string,
   ...
 }
 ```
@@ -133,6 +141,8 @@ asset-agent/
   ticker: "2330",
   shares: 10,
   buyPrice: 600,
+  marketPrice: 650, // optional, manual input
+  marketPriceUpdatedAt: "2026-06-15",
   buyDate: "2026-06-10",
   note: ""
 }

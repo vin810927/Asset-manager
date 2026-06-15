@@ -1,6 +1,8 @@
 export const STORAGE_KEY = "asset-agent.assets.v1";
 export const EXCHANGE_RATE_STORAGE_KEY = "asset-agent.exchange-rates.v1";
+export const FINANCIAL_GOALS_STORAGE_KEY = "asset-agent.financial-goals.v1";
 export const CURRENT_SCHEMA_VERSION = 1;
+export const BACKUP_SCHEMA_VERSION = 1;
 export const BASE_CURRENCY = "TWD";
 export const EXCHANGE_RATE_PROVIDER = {
   name: "ExchangeRate-API Open Access",
@@ -17,6 +19,16 @@ export const ASSET_TYPES = [
 ];
 
 export const CURRENCIES = ["TWD", "USD", "JPY", "EUR", "GBP", "AUD", "CAD", "HKD", "SGD", "CNY"];
+export const DEFAULT_FINANCIAL_GOALS = {
+  monthlyLivingExpense: 50000,
+  emergencyMonths: 6,
+  singleHoldingLimitPercent: 20,
+  stockExposureLimitPercent: 60,
+  debtRatioLimitPercent: 50,
+  staleAssetDays: 30,
+};
+export const STALE_EXCHANGE_RATE_DAYS = 7;
+export const STALE_STOCK_PRICE_DAYS = 7;
 
 export function formatNumber(value) {
   const number = Number(value || 0);
@@ -74,9 +86,24 @@ function getLocalStorage() {
   return globalThis.window?.localStorage ?? globalThis.localStorage;
 }
 
+function normalizeAsset(asset, fallbackTimestamp) {
+  const createdAt = asset.createdAt || fallbackTimestamp;
+  const updatedAt = asset.updatedAt || createdAt || fallbackTimestamp;
+
+  return {
+    ...asset,
+    createdAt,
+    updatedAt,
+  };
+}
+
 function normalizeAssets(value) {
   if (!Array.isArray(value)) return [];
-  return value.filter((asset) => asset && typeof asset === "object");
+
+  const fallbackTimestamp = new Date().toISOString();
+  return value
+    .filter((asset) => asset && typeof asset === "object")
+    .map((asset) => normalizeAsset(asset, fallbackTimestamp));
 }
 
 export function createAssetStore(assets) {
@@ -194,6 +221,91 @@ export function saveExchangeRates(exchangeRateStore) {
   if (!storage) return;
 
   storage.setItem(EXCHANGE_RATE_STORAGE_KEY, JSON.stringify(parseExchangeRateStore(exchangeRateStore)));
+}
+
+export function parseFinancialGoals(payload) {
+  const value = payload && typeof payload === "object" ? payload.financialGoals ?? payload : {};
+
+  return {
+    monthlyLivingExpense: Math.max(0, toNumber(value.monthlyLivingExpense ?? DEFAULT_FINANCIAL_GOALS.monthlyLivingExpense)),
+    emergencyMonths: Math.max(0, toNumber(value.emergencyMonths ?? DEFAULT_FINANCIAL_GOALS.emergencyMonths)),
+    singleHoldingLimitPercent: Math.max(
+      0,
+      toNumber(value.singleHoldingLimitPercent ?? DEFAULT_FINANCIAL_GOALS.singleHoldingLimitPercent),
+    ),
+    stockExposureLimitPercent: Math.max(
+      0,
+      toNumber(value.stockExposureLimitPercent ?? DEFAULT_FINANCIAL_GOALS.stockExposureLimitPercent),
+    ),
+    debtRatioLimitPercent: Math.max(0, toNumber(value.debtRatioLimitPercent ?? DEFAULT_FINANCIAL_GOALS.debtRatioLimitPercent)),
+    staleAssetDays: Math.max(1, toNumber(value.staleAssetDays ?? DEFAULT_FINANCIAL_GOALS.staleAssetDays)),
+  };
+}
+
+export function loadFinancialGoals() {
+  try {
+    const storage = getLocalStorage();
+    if (!storage) return DEFAULT_FINANCIAL_GOALS;
+
+    const raw = storage.getItem(FINANCIAL_GOALS_STORAGE_KEY);
+    if (!raw) return DEFAULT_FINANCIAL_GOALS;
+
+    return parseFinancialGoals(JSON.parse(raw));
+  } catch {
+    return DEFAULT_FINANCIAL_GOALS;
+  }
+}
+
+export function saveFinancialGoals(financialGoals) {
+  const storage = getLocalStorage();
+  if (!storage) return;
+
+  storage.setItem(
+    FINANCIAL_GOALS_STORAGE_KEY,
+    JSON.stringify({
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      updatedAt: new Date().toISOString(),
+      financialGoals: parseFinancialGoals(financialGoals),
+    }),
+  );
+}
+
+export function createBackupPayload({ assets, exchangeRates, financialGoals, lastCheckedAt = new Date().toISOString() }) {
+  return {
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    lastCheckedAt,
+    assets: createAssetStore(assets).assets,
+    exchangeRates: parseExchangeRateStore(exchangeRates),
+    financialGoals: parseFinancialGoals(financialGoals),
+  };
+}
+
+export function parseBackupPayload(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("匯入失敗：JSON 根節點必須是物件。");
+  }
+
+  if (!Array.isArray(payload.assets)) {
+    throw new Error("匯入失敗：找不到 assets 陣列。");
+  }
+
+  if (!payload.exchangeRates || typeof payload.exchangeRates !== "object") {
+    throw new Error("匯入失敗：找不到 exchangeRates 物件。");
+  }
+
+  if (!payload.financialGoals || typeof payload.financialGoals !== "object") {
+    throw new Error("匯入失敗：找不到 financialGoals 物件。");
+  }
+
+  return {
+    schemaVersion: toNumber(payload.schemaVersion) || BACKUP_SCHEMA_VERSION,
+    exportedAt: payload.exportedAt ?? null,
+    lastCheckedAt: payload.lastCheckedAt ?? null,
+    assets: parseAssetStore({ schemaVersion: CURRENT_SCHEMA_VERSION, assets: payload.assets }).assets,
+    exchangeRates: parseExchangeRateStore(payload.exchangeRates),
+    financialGoals: parseFinancialGoals(payload.financialGoals),
+  };
 }
 
 export function setManualExchangeRate(exchangeRateStore, currency, rateToTwd) {
@@ -476,4 +588,241 @@ export function summarizeInBaseCurrency(currencySummary, exchangeRateStore) {
   totals.missingCurrencies = [...new Set(totals.missingCurrencies)];
 
   return totals;
+}
+
+export function getDaysSince(value, now = new Date()) {
+  if (!value) return null;
+
+  const date = new Date(value);
+  const endDate = new Date(now);
+  if (Number.isNaN(date.getTime()) || Number.isNaN(endDate.getTime())) return null;
+
+  return Math.floor((endDate.getTime() - date.getTime()) / 86400000);
+}
+
+export function getAssetUpdatedAt(asset, fallbackTimestamp = new Date().toISOString()) {
+  return asset.updatedAt || asset.createdAt || fallbackTimestamp;
+}
+
+export function getLatestUpdatedAt(entries, fallbackTimestamp = new Date().toISOString()) {
+  const timestamp = Math.max(
+    0,
+    ...entries.map((asset) => {
+      const updatedAt = new Date(getAssetUpdatedAt(asset, fallbackTimestamp)).getTime();
+      return Number.isNaN(updatedAt) ? 0 : updatedAt;
+    }),
+  );
+
+  return timestamp > 0 ? new Date(timestamp).toISOString() : fallbackTimestamp;
+}
+
+export function getStockTickerCurrencySuggestion(ticker) {
+  const normalizedTicker = String(ticker || "").trim();
+  if (/^\d+$/.test(normalizedTicker)) return "TWD";
+  if (/^[A-Za-z]+$/.test(normalizedTicker)) return "USD";
+  return null;
+}
+
+export function getMarketPriceGapPercent(asset) {
+  if (asset.type !== "stock") return null;
+
+  const buyPrice = toNumber(asset.buyPrice);
+  const marketPrice = toNumber(asset.marketPrice);
+  if (buyPrice <= 0 || marketPrice <= 0) return null;
+
+  return (Math.abs(marketPrice - buyPrice) / buyPrice) * 100;
+}
+
+export function getAssetAbsoluteAmount(asset) {
+  return Math.abs(getAssetAmount(asset));
+}
+
+export function getAssetValueInTwd(asset, exchangeRateStore) {
+  const rateToTwd = getRateToTwd(exchangeRateStore, asset.currency || BASE_CURRENCY);
+  if (!rateToTwd) return null;
+
+  return getAssetAbsoluteAmount(asset) * rateToTwd;
+}
+
+export function getConcentrationItems({ assets, exchangeRates, financialGoals }) {
+  const goals = parseFinancialGoals(financialGoals);
+  const twdSummary = summarizeInBaseCurrency(summarizeByCurrency(assets), exchangeRates);
+  const items = groupStockHoldings(assets).map((holding) => {
+    const rateToTwd = getRateToTwd(exchangeRates, holding.currency);
+    const valueTwd = rateToTwd ? holding.totalCost * rateToTwd : null;
+
+    return {
+      key: holding.key,
+      ticker: holding.ticker,
+      currency: holding.currency,
+      valueTwd,
+      totalShares: holding.totalShares,
+      totalCost: holding.totalCost,
+    };
+  });
+  const totalStockValue = items.reduce((total, item) => total + (item.valueTwd ?? 0), 0);
+
+  return items
+    .map((item) => {
+      const stockSharePercent = item.valueTwd !== null && totalStockValue > 0 ? (item.valueTwd / totalStockValue) * 100 : null;
+      const totalAssetPercent = item.valueTwd !== null && twdSummary.assets > 0 ? (item.valueTwd / twdSummary.assets) * 100 : null;
+
+      return {
+        ...item,
+        stockSharePercent,
+        totalAssetPercent,
+        isWarning: totalAssetPercent !== null && totalAssetPercent > goals.singleHoldingLimitPercent,
+      };
+    })
+    .sort((a, b) => (b.valueTwd ?? -1) - (a.valueTwd ?? -1));
+}
+
+export function getGoalMetrics({ assets, exchangeRates, financialGoals }) {
+  const goals = parseFinancialGoals(financialGoals);
+  const twdSummary = summarizeInBaseCurrency(summarizeByCurrency(assets), exchangeRates);
+  let cashValueTwd = 0;
+  let riskAssetValueTwd = 0;
+  let missingValueCount = 0;
+
+  for (const asset of assets) {
+    const valueTwd = getAssetValueInTwd(asset, exchangeRates);
+    if (valueTwd === null) {
+      missingValueCount += 1;
+      continue;
+    }
+
+    if (asset.type === "cash") {
+      cashValueTwd += valueTwd;
+    }
+
+    if (asset.type === "stock" || asset.type === "fund") {
+      riskAssetValueTwd += valueTwd;
+    }
+  }
+
+  return {
+    cashValueTwd,
+    debtRatioPercent: twdSummary.assets > 0 ? (twdSummary.liabilities / twdSummary.assets) * 100 : 0,
+    emergencyTarget: goals.monthlyLivingExpense * goals.emergencyMonths,
+    missingValueCount,
+    riskAssetValueTwd,
+    riskExposurePercent: twdSummary.assets > 0 ? (riskAssetValueTwd / twdSummary.assets) * 100 : 0,
+    twdSummary,
+  };
+}
+
+export function buildAttentionItems({ assets, exchangeRates, financialGoals, now = new Date() }) {
+  const goals = parseFinancialGoals(financialGoals);
+  const twdSummary = summarizeInBaseCurrency(summarizeByCurrency(assets), exchangeRates);
+  const concentrationItems = getConcentrationItems({ assets, exchangeRates, financialGoals: goals });
+  const goalMetrics = getGoalMetrics({ assets, exchangeRates, financialGoals: goals });
+  const items = [];
+
+  if (assets.length === 0) {
+    items.push({ key: "empty", label: "尚未建立任何資產資料" });
+  }
+
+  if (twdSummary.missingCurrencies.length > 0) {
+    items.push({
+      key: "missing-rates",
+      label: `缺少 ${twdSummary.missingCurrencies.join(", ")} 匯率，部分估值未納入 TWD 淨值`,
+    });
+  }
+
+  const exchangeRateAge = getDaysSince(exchangeRates.sourceUpdatedAt || exchangeRates.fetchedAt, now);
+  if (exchangeRateAge !== null && exchangeRateAge > STALE_EXCHANGE_RATE_DAYS) {
+    items.push({ key: "stale-rates", label: `匯率資料已超過 ${exchangeRateAge} 天未更新` });
+  }
+
+  const staleCashAssets = assets.filter(
+    (asset) => asset.type === "cash" && (getDaysSince(getAssetUpdatedAt(asset), now) ?? 0) > goals.staleAssetDays,
+  );
+  if (staleCashAssets.length > 0) {
+    items.push({
+      key: "stale-cash",
+      label: `${staleCashAssets.length} 筆現金超過 ${goals.staleAssetDays} 天未更新，建議重新匯入或確認`,
+    });
+  }
+
+  const staleStockAssets = assets.filter(
+    (asset) =>
+      asset.type === "stock" &&
+      (getDaysSince(asset.marketPriceUpdatedAt || getAssetUpdatedAt(asset), now) ?? 0) > STALE_STOCK_PRICE_DAYS,
+  );
+  if (staleStockAssets.length > 0) {
+    items.push({
+      key: "stale-stock-price",
+      label: `${staleStockAssets.length} 筆股票超過 ${STALE_STOCK_PRICE_DAYS} 天未更新市價`,
+    });
+  }
+
+  const staleLoanAssets = assets.filter(
+    (asset) => asset.type === "loan" && (getDaysSince(getAssetUpdatedAt(asset), now) ?? 0) > goals.staleAssetDays,
+  );
+  if (staleLoanAssets.length > 0) {
+    items.push({
+      key: "stale-loan",
+      label: `${staleLoanAssets.length} 筆貸款超過 ${goals.staleAssetDays} 天未更新本金`,
+    });
+  }
+
+  const staleOtherAssets = assets.filter(
+    (asset) =>
+      (asset.type === "fund" || asset.type === "other") &&
+      (getDaysSince(getAssetUpdatedAt(asset), now) ?? 0) > goals.staleAssetDays,
+  );
+  if (staleOtherAssets.length > 0) {
+    items.push({
+      key: "stale-other-assets",
+      label: `${staleOtherAssets.length} 筆基金 / 其他資產超過 ${goals.staleAssetDays} 天未更新`,
+    });
+  }
+
+  const priceGapAssets = assets.filter((asset) => (getMarketPriceGapPercent(asset) ?? 0) > 80);
+  if (priceGapAssets.length > 0) {
+    items.push({
+      key: "price-gap",
+      label: `${priceGapAssets.length} 筆股票成本與目前市價差距超過 80%，請確認資料`,
+    });
+  }
+
+  const concentratedItems = concentrationItems.filter((item) => item.isWarning);
+  if (concentratedItems.length > 0) {
+    items.push({
+      key: "concentration",
+      label: `${concentratedItems[0].ticker} 占總資產超過 ${formatNumber(
+        goals.singleHoldingLimitPercent,
+      )}%，建議人工檢視集中度`,
+    });
+  }
+
+  if (goalMetrics.emergencyTarget > 0 && goalMetrics.cashValueTwd < goalMetrics.emergencyTarget) {
+    items.push({
+      key: "emergency-fund",
+      label: `緊急預備金不足：現金 ${formatCompactMoney(goalMetrics.cashValueTwd, BASE_CURRENCY)} / 目標 ${formatCompactMoney(
+        goalMetrics.emergencyTarget,
+        BASE_CURRENCY,
+      )}`,
+    });
+  }
+
+  if (goals.stockExposureLimitPercent > 0 && goalMetrics.riskExposurePercent > goals.stockExposureLimitPercent) {
+    items.push({
+      key: "risk-exposure",
+      label: `股票 / 基金曝險 ${formatNumber(goalMetrics.riskExposurePercent)}%，高於設定上限 ${formatNumber(
+        goals.stockExposureLimitPercent,
+      )}%`,
+    });
+  }
+
+  if (goals.debtRatioLimitPercent > 0 && goalMetrics.debtRatioPercent > goals.debtRatioLimitPercent) {
+    items.push({
+      key: "liability-ratio",
+      label: `負債比 ${formatNumber(goalMetrics.debtRatioPercent)}%，高於設定上限 ${formatNumber(
+        goals.debtRatioLimitPercent,
+      )}%`,
+    });
+  }
+
+  return items;
 }
