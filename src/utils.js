@@ -29,6 +29,26 @@ export const DEFAULT_FINANCIAL_GOALS = {
 };
 export const STALE_EXCHANGE_RATE_DAYS = 7;
 export const STALE_STOCK_PRICE_DAYS = 7;
+export const CSV_COLUMNS = [
+  "id",
+  "type",
+  "name",
+  "ticker",
+  "currency",
+  "amount",
+  "shares",
+  "buyPrice",
+  "marketPrice",
+  "marketPriceUpdatedAt",
+  "buyDate",
+  "principal",
+  "years",
+  "annualRate",
+  "startDate",
+  "note",
+  "createdAt",
+  "updatedAt",
+];
 
 export function formatNumber(value) {
   const number = Number(value || 0);
@@ -305,6 +325,390 @@ export function parseBackupPayload(payload) {
     assets: parseAssetStore({ schemaVersion: CURRENT_SCHEMA_VERSION, assets: payload.assets }).assets,
     exchangeRates: parseExchangeRateStore(payload.exchangeRates),
     financialGoals: parseFinancialGoals(payload.financialGoals),
+  };
+}
+
+function escapeCsvValue(value) {
+  const text = value === undefined || value === null ? "" : String(value);
+
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replaceAll('"', '""')}"`;
+  }
+
+  return text;
+}
+
+function getCsvCell(record, key) {
+  return record[key] === undefined || record[key] === null ? "" : String(record[key]);
+}
+
+function getTrimmedCsvCell(record, key) {
+  return getCsvCell(record, key).trim();
+}
+
+function hasCsvValue(record, key) {
+  return getTrimmedCsvCell(record, key) !== "";
+}
+
+function createCsvError(rowNumber, messages) {
+  return {
+    rowNumber,
+    messages,
+    message: messages.join("；"),
+  };
+}
+
+function parseOptionalCsvNumber(record, key, label, errors, { min = null, exclusiveMin = null } = {}) {
+  if (!hasCsvValue(record, key)) return null;
+
+  const number = Number(getTrimmedCsvCell(record, key));
+  if (!Number.isFinite(number)) {
+    errors.push(`${label} 必須是數字`);
+    return null;
+  }
+
+  if (exclusiveMin !== null && number <= exclusiveMin) {
+    errors.push(`${label} 必須大於 ${exclusiveMin}`);
+  }
+
+  if (min !== null && number < min) {
+    errors.push(`${label} 不可小於 ${min}`);
+  }
+
+  return number;
+}
+
+function parseRequiredCsvNumber(record, key, label, errors, options) {
+  if (!hasCsvValue(record, key)) {
+    errors.push(`缺少 ${label}`);
+    return null;
+  }
+
+  return parseOptionalCsvNumber(record, key, label, errors, options);
+}
+
+function normalizeCsvDate(record, key, label, errors, { required = false } = {}) {
+  const value = getTrimmedCsvCell(record, key);
+
+  if (!value) {
+    if (required) errors.push(`缺少 ${label}`);
+    return "";
+  }
+
+  if (Number.isNaN(new Date(value).getTime())) {
+    errors.push(`${label} 日期格式不正確`);
+  }
+
+  return value;
+}
+
+function normalizeCsvTimestamp(record, key, label, errors, fallbackTimestamp) {
+  const value = getTrimmedCsvCell(record, key);
+
+  if (!value) return fallbackTimestamp;
+
+  if (Number.isNaN(new Date(value).getTime())) {
+    errors.push(`${label} 日期格式不正確`);
+  }
+
+  return value;
+}
+
+function normalizeCsvAsset(record, { createId = createAssetId, now = new Date() } = {}) {
+  const errors = [];
+  const nowIso = new Date(now).toISOString();
+  const allowedTypes = ASSET_TYPES.map((item) => item.value);
+  const id = getTrimmedCsvCell(record, "id") || createId();
+  const type = getTrimmedCsvCell(record, "type").toLowerCase();
+  const currency = getTrimmedCsvCell(record, "currency").toUpperCase();
+  const note = getCsvCell(record, "note").trim();
+
+  if (!type) {
+    errors.push("缺少 type");
+  } else if (!allowedTypes.includes(type)) {
+    errors.push(`type 必須是 ${allowedTypes.join(" / ")} 之一`);
+  }
+
+  if (!currency) {
+    errors.push("缺少 currency");
+  } else if (!CURRENCIES.includes(currency)) {
+    errors.push(`currency 必須是 ${CURRENCIES.join(" / ")} 之一`);
+  }
+
+  const createdAt = normalizeCsvTimestamp(record, "createdAt", "createdAt", errors, nowIso);
+  const updatedAt = normalizeCsvTimestamp(record, "updatedAt", "updatedAt", errors, createdAt || nowIso);
+  const base = {
+    id,
+    type,
+    currency,
+    note,
+    createdAt,
+    updatedAt,
+  };
+
+  if (type === "stock") {
+    const ticker = getTrimmedCsvCell(record, "ticker").toUpperCase();
+    if (!ticker) errors.push("缺少 ticker");
+
+    const shares = parseRequiredCsvNumber(record, "shares", "shares", errors, { exclusiveMin: 0 });
+    const buyPrice = parseRequiredCsvNumber(record, "buyPrice", "buyPrice", errors, { min: 0 });
+    const marketPrice = parseOptionalCsvNumber(record, "marketPrice", "marketPrice", errors, { min: 0 });
+    const buyDate = normalizeCsvDate(record, "buyDate", "buyDate", errors, { required: true });
+    const marketPriceUpdatedAt = normalizeCsvDate(record, "marketPriceUpdatedAt", "marketPriceUpdatedAt", errors);
+
+    if (errors.length > 0) return { asset: null, errors };
+
+    return {
+      asset: {
+        ...base,
+        ticker,
+        shares,
+        buyPrice,
+        ...(marketPrice !== null
+          ? {
+              marketPrice,
+              marketPriceUpdatedAt: marketPriceUpdatedAt || updatedAt,
+            }
+          : {}),
+        buyDate,
+      },
+      errors: [],
+    };
+  }
+
+  if (type === "loan") {
+    const name = getTrimmedCsvCell(record, "name");
+    if (!name) errors.push("缺少 name");
+
+    const principal = parseRequiredCsvNumber(record, "principal", "principal", errors, { exclusiveMin: 0 });
+    const years = parseRequiredCsvNumber(record, "years", "years", errors, { exclusiveMin: 0 });
+    const annualRate = parseRequiredCsvNumber(record, "annualRate", "annualRate", errors, { min: 0 });
+    const startDate = normalizeCsvDate(record, "startDate", "startDate", errors, { required: true });
+
+    if (errors.length > 0) return { asset: null, errors };
+
+    return {
+      asset: {
+        ...base,
+        name,
+        principal,
+        years,
+        annualRate,
+        startDate,
+      },
+      errors: [],
+    };
+  }
+
+  const name = getTrimmedCsvCell(record, "name");
+  if (!name) errors.push("缺少 name");
+
+  const amount = parseRequiredCsvNumber(record, "amount", "amount", errors, { min: 0 });
+
+  if (errors.length > 0) return { asset: null, errors };
+
+  return {
+    asset: {
+      ...base,
+      name,
+      amount,
+    },
+    errors: [],
+  };
+}
+
+export function getCsvExportFileName(date = new Date()) {
+  const parsedDate = new Date(date);
+  const dateText = Number.isNaN(parsedDate.getTime())
+    ? new Date().toISOString().slice(0, 10)
+    : parsedDate.toISOString().slice(0, 10);
+
+  return `asset-agent-export-${dateText}.csv`;
+}
+
+export function exportAssetsToCsv(assets) {
+  const rows = [
+    CSV_COLUMNS,
+    ...createAssetStore(assets).assets.map((asset) => CSV_COLUMNS.map((column) => getCsvCell(asset, column))),
+  ];
+
+  return rows.map((row) => row.map(escapeCsvValue).join(",")).join("\n");
+}
+
+export function createCsvTemplate() {
+  return exportAssetsToCsv([
+    {
+      id: "sample-cash-twd",
+      type: "cash",
+      name: "台幣活存",
+      ticker: "",
+      currency: "TWD",
+      amount: 100000,
+      note: "現金示例",
+      createdAt: "2026-06-15T00:00:00.000Z",
+      updatedAt: "2026-06-15T00:00:00.000Z",
+    },
+    {
+      id: "sample-stock-usd",
+      type: "stock",
+      name: "",
+      ticker: "AAPL",
+      currency: "USD",
+      shares: 10,
+      buyPrice: 180,
+      marketPrice: 185,
+      marketPriceUpdatedAt: "2026-06-15",
+      buyDate: "2026-06-15",
+      note: "股票示例",
+      createdAt: "2026-06-15T00:00:00.000Z",
+      updatedAt: "2026-06-15T00:00:00.000Z",
+    },
+    {
+      id: "sample-loan-twd",
+      type: "loan",
+      name: "房貸",
+      ticker: "",
+      currency: "TWD",
+      principal: 3000000,
+      years: 20,
+      annualRate: 2.1,
+      startDate: "2026-06-15",
+      note: "貸款示例",
+      createdAt: "2026-06-15T00:00:00.000Z",
+      updatedAt: "2026-06-15T00:00:00.000Z",
+    },
+  ]);
+}
+
+export function parseCsvRows(csvText) {
+  const text = String(csvText ?? "").replace(/^\uFEFF/, "");
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+
+    if (inQuotes) {
+      if (character === '"') {
+        if (text[index + 1] === '"') {
+          field += '"';
+          index += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += character;
+      }
+      continue;
+    }
+
+    if (character === '"') {
+      inQuotes = true;
+      continue;
+    }
+
+    if (character === ",") {
+      row.push(field);
+      field = "";
+      continue;
+    }
+
+    if (character === "\n" || character === "\r") {
+      if (character === "\r" && text[index + 1] === "\n") index += 1;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+      continue;
+    }
+
+    field += character;
+  }
+
+  if (inQuotes) {
+    throw new Error("CSV 格式錯誤：雙引號欄位未關閉。");
+  }
+
+  row.push(field);
+  if (row.some((cell) => cell !== "") || text.endsWith(",")) {
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+export function parseAssetsCsv(csvText, options = {}) {
+  let rows;
+
+  try {
+    rows = parseCsvRows(csvText);
+  } catch (error) {
+    return {
+      assets: [],
+      errors: [createCsvError(0, [error.message || "CSV 格式錯誤。"])],
+      totalRows: 0,
+      validCount: 0,
+      errorCount: 1,
+    };
+  }
+
+  if (rows.length === 0 || rows[0].every((cell) => cell.trim() === "")) {
+    return {
+      assets: [],
+      errors: [createCsvError(1, ["CSV 必須包含 header。"])],
+      totalRows: 0,
+      validCount: 0,
+      errorCount: 1,
+    };
+  }
+
+  const headers = rows[0].map((cell) => cell.trim());
+  const headerErrors = [];
+  for (const column of ["type", "currency"]) {
+    if (!headers.includes(column)) headerErrors.push(`缺少必要欄位 ${column}`);
+  }
+
+  if (headerErrors.length > 0) {
+    const totalRows = rows.slice(1).filter((row) => row.some((cell) => cell.trim() !== "")).length;
+
+    return {
+      assets: [],
+      errors: [createCsvError(1, headerErrors)],
+      totalRows,
+      validCount: 0,
+      errorCount: 1,
+    };
+  }
+
+  const assets = [];
+  const errors = [];
+  const bodyRows = rows
+    .slice(1)
+    .map((row, index) => ({ row, rowNumber: index + 2 }))
+    .filter(({ row }) => row.some((cell) => cell.trim() !== ""));
+
+  for (const { row, rowNumber } of bodyRows) {
+    const record = {};
+    headers.forEach((header, index) => {
+      if (header) record[header] = row[index] ?? "";
+    });
+
+    const result = normalizeCsvAsset(record, options);
+    if (result.errors.length > 0) {
+      errors.push(createCsvError(rowNumber, result.errors));
+    } else {
+      assets.push(result.asset);
+    }
+  }
+
+  return {
+    assets,
+    errors,
+    totalRows: bodyRows.length,
+    validCount: assets.length,
+    errorCount: errors.length,
   };
 }
 

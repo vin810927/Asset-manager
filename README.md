@@ -29,6 +29,7 @@
 - 可按需更新公開匯率，並以 TWD 估算跨幣別淨資產
 - 支援手動編輯匯率，方便在公開資料延遲或需要保守估值時覆寫
 - 支援本地資料可靠性提醒、理財目標設定與 JSON 匯入匯出備份
+- 支援 Asset Agent 標準 CSV 匯出、CSV 範本下載與匯入 preview
 - 新增貸款時需輸入：
   - 貸款名稱
   - 本金
@@ -162,6 +163,20 @@ asset-agent/
 }
 ```
 
+## 匯入與匯出
+
+JSON 是完整備份格式，包含資產明細、匯率、理財目標與最後檢查時間，適合在更換瀏覽器或重建 localStorage 前保存完整狀態。
+
+CSV 是人工整理與批次匯入格式，只處理 `assets`。使用者可以下載標準 CSV 範本，在 Excel 或 Google Sheets 編輯後匯入。匯入時會先顯示 preview，列出可匯入筆數與錯誤列，按確認後才加入目前資料。
+
+CSV 欄位包含：
+
+```text
+id,type,name,ticker,currency,amount,shares,buyPrice,marketPrice,marketPriceUpdatedAt,buyDate,principal,years,annualRate,startDate,note,createdAt,updatedAt
+```
+
+目前 CSV 不支援銀行、券商或信用卡原始檔，也不支援 xlsx。銀行或券商資料需先整理成 Asset Agent 標準 CSV。
+
 ## 未來方向
 
 後續可以逐步加入：
@@ -174,7 +189,7 @@ asset-agent/
 - 定期提醒匯入資產數值
 - AI 理財摘要
 - 多人共同記帳與資產分帳
-- CSV / Excel 匯入匯出
+- Excel / xlsx 範本輔助
 
 ## 安全原則
 

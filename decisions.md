@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-06-15：CSV 作為人工整理與批次匯入格式
+
+### 決策
+新增 Asset Agent 標準 CSV 匯出、CSV 範本下載與匯入 preview。
+JSON 維持完整備份格式，包含資產明細、匯率、理財目標與最後檢查時間；CSV 則只處理 `assets`，用於 Excel / Google Sheets 人工整理後批次匯入。
+CSV 匯入前先 parse 與驗證，缺少 `id`、`createdAt` 或 `updatedAt` 時由前端補值，使用者確認後才加入目前資料。
+
+### 理由
+- JSON 適合完整還原 localStorage 狀態，CSV 適合人工編輯與跨工具整理
+- CSV preview 可以避免格式錯誤直接污染目前資料
+- 第一版不新增 parser 套件，降低 dependency 維護成本
+
+### 限制
+CSV 只支援 Asset Agent 自訂標準格式，不支援銀行、券商、信用卡原始檔，也不支援 xlsx。若日後要支援特定機構格式，需要獨立做欄位 mapping 與資料清理流程。
+
+---
+
 ## 2026-06-15：Smoke test 先覆蓋核心資料邏輯
 
 ### 決策

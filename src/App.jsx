@@ -5,6 +5,8 @@ import {
   buildAttentionItems,
   createBackupPayload,
   createAssetId,
+  createCsvTemplate,
+  exportAssetsToCsv,
   fetchLatestExchangeRates,
   formatCompactMoney,
   formatDateTime,
@@ -15,6 +17,7 @@ import {
   getAssetTypeLabel,
   getAssetUpdatedAt,
   getConcentrationItems,
+  getCsvExportFileName,
   getLatestUpdatedAt,
   getLoanSnapshot,
   getMarketPriceGapPercent,
@@ -26,6 +29,7 @@ import {
   loadExchangeRates,
   loadFinancialGoals,
   parseBackupPayload,
+  parseAssetsCsv,
   saveAssets,
   saveExchangeRates,
   saveFinancialGoals,
@@ -448,6 +452,17 @@ function getBackupFileName() {
   return `asset-agent-backup-${new Date().toISOString().slice(0, 10)}.json`;
 }
 
+function downloadTextFile(content, fileName, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 function getAssetSortTimestamp(asset) {
   const dateValue = asset.updatedAt || (asset.type === "stock" ? asset.buyDate : asset.type === "loan" ? asset.startDate : asset.createdAt);
   const timestamp = new Date(dateValue || asset.createdAt || 0).getTime();
@@ -537,6 +552,8 @@ function App() {
   const [styleMode, setStyleMode] = useState(() => loadStyleMode());
   const [selectedOverviewKey, setSelectedOverviewKey] = useState(null);
   const importFileInputRef = useRef(null);
+  const csvImportFileInputRef = useRef(null);
+  const [csvImportPreview, setCsvImportPreview] = useState(null);
 
   useEffect(() => {
     saveAssets(assets);
@@ -952,6 +969,7 @@ function App() {
     setAssets([]);
     setExpandedAssetGroups({});
     setIsAssetFormOpen(false);
+    setCsvImportPreview(null);
     cancelEditing();
     cancelDeleteAsset();
     resetForm();
@@ -1004,15 +1022,19 @@ function App() {
       financialGoals,
       lastCheckedAt: new Date().toISOString(),
     });
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
 
-    anchor.href = url;
-    anchor.download = getBackupFileName();
-    anchor.click();
-    URL.revokeObjectURL(url);
+    downloadTextFile(JSON.stringify(payload, null, 2), getBackupFileName(), "application/json");
     setDataToolStatus(`已匯出 ${payload.assets.length} 筆資產資料。`);
+  }
+
+  function exportCsvData() {
+    downloadTextFile(exportAssetsToCsv(assets), getCsvExportFileName(), "text/csv;charset=utf-8");
+    setDataToolStatus(`已匯出 ${assets.length} 筆資產資料為 CSV。`);
+  }
+
+  function downloadCsvTemplate() {
+    downloadTextFile(createCsvTemplate(), "asset-agent-template.csv", "text/csv;charset=utf-8");
+    setDataToolStatus("已下載 Asset Agent 標準 CSV 範本。");
   }
 
   async function importJsonData(event) {
@@ -1027,6 +1049,7 @@ function App() {
       setFinancialGoals(payload.financialGoals);
       setExpandedAssetGroups({});
       setSelectedOverviewKey(null);
+      setCsvImportPreview(null);
       cancelEditing();
       cancelDeleteAsset();
       resetAssetFilters();
@@ -1036,6 +1059,45 @@ function App() {
     } finally {
       event.target.value = "";
     }
+  }
+
+  async function importCsvData(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const preview = parseAssetsCsv(await file.text());
+      setCsvImportPreview(preview);
+      setDataToolStatus(`CSV 解析完成：可匯入 ${preview.validCount} 筆，錯誤 ${preview.errorCount} 筆。`);
+    } catch (error) {
+      setCsvImportPreview(null);
+      setDataToolStatus(error.message || "CSV 匯入失敗：檔案格式不正確。");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  function confirmCsvImport() {
+    if (!csvImportPreview) return;
+
+    if (csvImportPreview.assets.length === 0) {
+      setDataToolStatus("CSV 沒有可匯入的有效資料。");
+      return;
+    }
+
+    setAssets((current) => [...csvImportPreview.assets, ...current]);
+    setExpandedAssetGroups({});
+    setSelectedOverviewKey(null);
+    cancelEditing();
+    cancelDeleteAsset();
+    resetAssetFilters();
+    setDataToolStatus(`CSV 匯入成功：新增 ${csvImportPreview.assets.length} 筆資產資料。`);
+    setCsvImportPreview(null);
+  }
+
+  function cancelCsvImport() {
+    setCsvImportPreview(null);
+    setDataToolStatus("已取消 CSV 匯入。");
   }
 
   function toggleAssetGroup(key) {
@@ -1568,7 +1630,7 @@ function App() {
           onClick={() => setIsDataToolsOpen((current) => !current)}
         >
           <span>理財目標與備份</span>
-          <small>設定提醒門檻、JSON 匯入匯出</small>
+          <small>設定提醒門檻、JSON 備份、CSV 匯入匯出</small>
           <span className="expand-indicator">{isDataToolsOpen ? "⌃" : "⌄"}</span>
         </button>
 
@@ -1649,10 +1711,67 @@ function App() {
                 accept="application/json,.json"
                 onChange={importJsonData}
               />
+              <button className="ghost-button" type="button" onClick={exportCsvData}>
+                匯出 CSV
+              </button>
+              <button className="ghost-button" type="button" onClick={downloadCsvTemplate}>
+                下載 CSV 範本
+              </button>
+              <button className="ghost-button" type="button" onClick={() => csvImportFileInputRef.current?.click()}>
+                匯入 CSV
+              </button>
+              <input
+                ref={csvImportFileInputRef}
+                className="visually-hidden"
+                type="file"
+                accept=".csv,text/csv"
+                onChange={importCsvData}
+              />
               <button className="subtle-danger-button" type="button" onClick={clearAll}>
                 清空資料
               </button>
             </div>
+
+            {csvImportPreview && (
+              <div className="csv-preview" aria-live="polite">
+                <div className="csv-preview-summary">
+                  <div>
+                    <strong>CSV 匯入預覽</strong>
+                    <small>只支援 Asset Agent 標準 CSV，不支援銀行或券商原始檔。</small>
+                  </div>
+                  <span>
+                    可匯入 {csvImportPreview.validCount} 筆 · 錯誤 {csvImportPreview.errorCount} 筆
+                  </span>
+                </div>
+
+                {csvImportPreview.errors.length > 0 && (
+                  <div className="csv-error-box">
+                    <strong>錯誤列</strong>
+                    <ul>
+                      {csvImportPreview.errors.map((error) => (
+                        <li key={`${error.rowNumber}-${error.message}`}>
+                          第 {error.rowNumber} 列：{error.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="form-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={confirmCsvImport}
+                    disabled={csvImportPreview.assets.length === 0}
+                  >
+                    確認匯入
+                  </button>
+                  <button className="ghost-button" type="button" onClick={cancelCsvImport}>
+                    取消匯入
+                  </button>
+                </div>
+              </div>
+            )}
 
             {dataToolStatus && <p className="rate-status">{dataToolStatus}</p>}
           </div>
