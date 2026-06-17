@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-06-16：ETF 獨立類型與共用資料驗證
+
+### 決策
+新增 `type: "etf"`，ETF 與股票共用 ticker、shares、buyPrice、buyDate、marketPrice 等欄位，但在資產配置、明細篩選與集中度風險中獨立呈現。
+表單新增 / 編輯與 CSV 匯入 preview 共用 `validateAssetInput`，同一套規則負責 ticker 幣別建議、數值欄位、日期格式、價格差異、單一標的集中度與股票 / ETF / 基金總曝險。
+validation 結果分為 error 與 warning：error 阻止新增或匯入；warning 不阻止，但表單會要求人工確認，CSV preview 會列出 warning row 並在確認匯入前再次提醒。
+
+### 理由
+- ETF 在投資決策與風險控管上通常介於股票與基金之間，混在 stock 或 fund 都會讓分類與集中度判斷失真
+- 讓表單與 CSV 共用 validation helper，可避免同一筆資料在不同入口得到不同結果
+- warning 不直接阻止寫入，保留使用者處理特殊標的或非典型幣別的彈性；error 才代表資料無法可靠計算
+
+### 限制
+目前 ETF 仍需使用者手動輸入價格，不串真實股價 API。表單 warning 仍以 `window.confirm` 呈現，後續可改成更細緻的 inline validation 區塊。
+
+---
+
 ## 2026-06-15：CSV 作為人工整理與批次匯入格式
 
 ### 決策

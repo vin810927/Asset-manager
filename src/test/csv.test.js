@@ -72,14 +72,14 @@ describe("Asset Agent CSV import/export", () => {
     );
   });
 
-  it("CSV 範本包含 header 與三筆示例資料", () => {
+  it("CSV 範本包含 header 與四筆示例資料", () => {
     const rows = parseCsvRows(createCsvTemplate());
     const [header, ...examples] = rows;
     const records = examples.map((row) => rowToRecord(header, row));
 
     expect(header).toEqual(CSV_COLUMNS);
-    expect(records).toHaveLength(3);
-    expect(records.map((record) => record.type)).toEqual(["cash", "stock", "loan"]);
+    expect(records).toHaveLength(4);
+    expect(records.map((record) => record.type)).toEqual(["cash", "stock", "etf", "loan"]);
   });
 
   it("標準 CSV 可轉成 assets，並保留數值型欄位", () => {

@@ -13,12 +13,15 @@ export const EXCHANGE_RATE_PROVIDER = {
 export const ASSET_TYPES = [
   { value: "cash", label: "現金" },
   { value: "stock", label: "股票" },
+  { value: "etf", label: "ETF" },
   { value: "fund", label: "基金" },
   { value: "loan", label: "貸款" },
   { value: "other", label: "其他" },
 ];
 
 export const CURRENCIES = ["TWD", "USD", "JPY", "EUR", "GBP", "AUD", "CAD", "HKD", "SGD", "CNY"];
+export const TRADED_ASSET_TYPES = ["stock", "etf"];
+export const RISK_ASSET_TYPES = ["stock", "etf", "fund"];
 export const DEFAULT_FINANCIAL_GOALS = {
   monthlyLivingExpense: 50000,
   emergencyMonths: 6,
@@ -100,6 +103,31 @@ export function formatDateTime(value) {
 export function toNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function isTradedAssetType(type) {
+  return TRADED_ASSET_TYPES.includes(type);
+}
+
+export function isRiskAssetType(type) {
+  return RISK_ASSET_TYPES.includes(type);
+}
+
+function hasInputValue(value) {
+  return value !== undefined && value !== null && String(value).trim() !== "";
+}
+
+function isValidNumberInput(value) {
+  if (!hasInputValue(value)) return false;
+  return Number.isFinite(Number(value));
+}
+
+function isValidDateOnly(value) {
+  const text = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+
+  const date = new Date(`${text}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === text;
 }
 
 function getLocalStorage() {
@@ -358,6 +386,26 @@ function createCsvError(rowNumber, messages) {
   };
 }
 
+function createCsvIssue(rowNumber, messages) {
+  return createCsvError(rowNumber, messages);
+}
+
+function finalizeCsvAsset(asset, errors, options) {
+  if (errors.length > 0) {
+    return { asset: null, errors, warnings: [] };
+  }
+
+  const validation = validateAssetInput(asset, options);
+  const validationErrors = validation.errors.map((issue) => issue.message);
+  const warnings = validation.warnings.map((issue) => issue.message);
+
+  return {
+    asset: validationErrors.length > 0 ? null : asset,
+    errors: validationErrors,
+    warnings,
+  };
+}
+
 function parseOptionalCsvNumber(record, key, label, errors, { min = null, exclusiveMin = null } = {}) {
   if (!hasCsvValue(record, key)) return null;
 
@@ -414,7 +462,8 @@ function normalizeCsvTimestamp(record, key, label, errors, fallbackTimestamp) {
   return value;
 }
 
-function normalizeCsvAsset(record, { createId = createAssetId, now = new Date() } = {}) {
+function normalizeCsvAsset(record, options = {}) {
+  const { createId = createAssetId, now = new Date() } = options;
   const errors = [];
   const nowIso = new Date(now).toISOString();
   const allowedTypes = ASSET_TYPES.map((item) => item.value);
@@ -446,20 +495,17 @@ function normalizeCsvAsset(record, { createId = createAssetId, now = new Date() 
     updatedAt,
   };
 
-  if (type === "stock") {
+  if (isTradedAssetType(type)) {
     const ticker = getTrimmedCsvCell(record, "ticker").toUpperCase();
-    if (!ticker) errors.push("缺少 ticker");
 
-    const shares = parseRequiredCsvNumber(record, "shares", "shares", errors, { exclusiveMin: 0 });
-    const buyPrice = parseRequiredCsvNumber(record, "buyPrice", "buyPrice", errors, { min: 0 });
+    const shares = parseRequiredCsvNumber(record, "shares", "shares", errors);
+    const buyPrice = parseRequiredCsvNumber(record, "buyPrice", "buyPrice", errors);
     const marketPrice = parseOptionalCsvNumber(record, "marketPrice", "marketPrice", errors, { min: 0 });
-    const buyDate = normalizeCsvDate(record, "buyDate", "buyDate", errors, { required: true });
+    const buyDate = normalizeCsvDate(record, "buyDate", "buyDate", errors);
     const marketPriceUpdatedAt = normalizeCsvDate(record, "marketPriceUpdatedAt", "marketPriceUpdatedAt", errors);
 
-    if (errors.length > 0) return { asset: null, errors };
-
-    return {
-      asset: {
+    return finalizeCsvAsset(
+      {
         ...base,
         ticker,
         shares,
@@ -472,23 +518,20 @@ function normalizeCsvAsset(record, { createId = createAssetId, now = new Date() 
           : {}),
         buyDate,
       },
-      errors: [],
-    };
+      errors,
+      options,
+    );
   }
 
   if (type === "loan") {
     const name = getTrimmedCsvCell(record, "name");
-    if (!name) errors.push("缺少 name");
+    const principal = parseRequiredCsvNumber(record, "principal", "principal", errors);
+    const years = parseRequiredCsvNumber(record, "years", "years", errors);
+    const annualRate = parseRequiredCsvNumber(record, "annualRate", "annualRate", errors);
+    const startDate = normalizeCsvDate(record, "startDate", "startDate", errors);
 
-    const principal = parseRequiredCsvNumber(record, "principal", "principal", errors, { exclusiveMin: 0 });
-    const years = parseRequiredCsvNumber(record, "years", "years", errors, { exclusiveMin: 0 });
-    const annualRate = parseRequiredCsvNumber(record, "annualRate", "annualRate", errors, { min: 0 });
-    const startDate = normalizeCsvDate(record, "startDate", "startDate", errors, { required: true });
-
-    if (errors.length > 0) return { asset: null, errors };
-
-    return {
-      asset: {
+    return finalizeCsvAsset(
+      {
         ...base,
         name,
         principal,
@@ -496,25 +539,23 @@ function normalizeCsvAsset(record, { createId = createAssetId, now = new Date() 
         annualRate,
         startDate,
       },
-      errors: [],
-    };
+      errors,
+      options,
+    );
   }
 
   const name = getTrimmedCsvCell(record, "name");
-  if (!name) errors.push("缺少 name");
+  const amount = parseRequiredCsvNumber(record, "amount", "amount", errors);
 
-  const amount = parseRequiredCsvNumber(record, "amount", "amount", errors, { min: 0 });
-
-  if (errors.length > 0) return { asset: null, errors };
-
-  return {
-    asset: {
+  return finalizeCsvAsset(
+    {
       ...base,
       name,
       amount,
     },
-    errors: [],
-  };
+    errors,
+    options,
+  );
 }
 
 export function getCsvExportFileName(date = new Date()) {
@@ -560,6 +601,21 @@ export function createCsvTemplate() {
       marketPriceUpdatedAt: "2026-06-15",
       buyDate: "2026-06-15",
       note: "股票示例",
+      createdAt: "2026-06-15T00:00:00.000Z",
+      updatedAt: "2026-06-15T00:00:00.000Z",
+    },
+    {
+      id: "sample-etf-twd",
+      type: "etf",
+      name: "",
+      ticker: "0050",
+      currency: "TWD",
+      shares: 20,
+      buyPrice: 160,
+      marketPrice: 162,
+      marketPriceUpdatedAt: "2026-06-15",
+      buyDate: "2026-06-15",
+      note: "ETF 示例",
       createdAt: "2026-06-15T00:00:00.000Z",
       updatedAt: "2026-06-15T00:00:00.000Z",
     },
@@ -648,9 +704,11 @@ export function parseAssetsCsv(csvText, options = {}) {
     return {
       assets: [],
       errors: [createCsvError(0, [error.message || "CSV 格式錯誤。"])],
+      warnings: [],
       totalRows: 0,
       validCount: 0,
       errorCount: 1,
+      warningCount: 0,
     };
   }
 
@@ -658,9 +716,11 @@ export function parseAssetsCsv(csvText, options = {}) {
     return {
       assets: [],
       errors: [createCsvError(1, ["CSV 必須包含 header。"])],
+      warnings: [],
       totalRows: 0,
       validCount: 0,
       errorCount: 1,
+      warningCount: 0,
     };
   }
 
@@ -676,14 +736,17 @@ export function parseAssetsCsv(csvText, options = {}) {
     return {
       assets: [],
       errors: [createCsvError(1, headerErrors)],
+      warnings: [],
       totalRows,
       validCount: 0,
       errorCount: 1,
+      warningCount: 0,
     };
   }
 
   const assets = [];
   const errors = [];
+  const warnings = [];
   const bodyRows = rows
     .slice(1)
     .map((row, index) => ({ row, rowNumber: index + 2 }))
@@ -695,20 +758,28 @@ export function parseAssetsCsv(csvText, options = {}) {
       if (header) record[header] = row[index] ?? "";
     });
 
-    const result = normalizeCsvAsset(record, options);
+    const result = normalizeCsvAsset(record, {
+      ...options,
+      assets: [...(options.assets ?? []), ...assets],
+    });
     if (result.errors.length > 0) {
       errors.push(createCsvError(rowNumber, result.errors));
     } else {
       assets.push(result.asset);
+      if (result.warnings.length > 0) {
+        warnings.push(createCsvIssue(rowNumber, result.warnings));
+      }
     }
   }
 
   return {
     assets,
     errors,
+    warnings,
     totalRows: bodyRows.length,
     validCount: assets.length,
     errorCount: errors.length,
+    warningCount: warnings.length,
   };
 }
 
@@ -783,7 +854,7 @@ export function getAssetTypeLabel(type) {
 }
 
 export function getAssetDisplayName(asset) {
-  if (asset.type === "stock") return asset.ticker || "未命名股票";
+  if (isTradedAssetType(asset.type)) return asset.ticker || `未命名${getAssetTypeLabel(asset.type)}`;
   return asset.name || getAssetTypeLabel(asset.type);
 }
 
@@ -845,6 +916,7 @@ export function getLoanSnapshot(asset, asOfDate = new Date()) {
 export function getAssetAmount(asset) {
   switch (asset.type) {
     case "stock":
+    case "etf":
       return toNumber(asset.shares) * toNumber(asset.buyPrice);
     case "loan":
       return -getLoanSnapshot(asset).remainingPrincipal;
@@ -860,18 +932,21 @@ function normalizeGroupKeyPart(value) {
     .toLowerCase();
 }
 
-export function groupStockHoldings(assets) {
-  const stockAssets = assets.filter((asset) => asset.type === "stock");
+export function groupTradedHoldings(assets, types = TRADED_ASSET_TYPES) {
+  const tradedAssets = assets.filter((asset) => types.includes(asset.type));
   const groups = new Map();
 
-  for (const asset of stockAssets) {
+  for (const asset of tradedAssets) {
+    const type = asset.type || "stock";
     const ticker = (asset.ticker || "").trim().toUpperCase();
     const currency = asset.currency || "TWD";
     if (!ticker) continue;
 
-    const key = `${ticker}_${currency}`;
+    const key = `${type}_${ticker}_${currency}`;
     const current = groups.get(key) ?? {
       key,
+      type,
+      typeLabel: getAssetTypeLabel(type),
       ticker,
       currency,
       totalShares: 0,
@@ -901,11 +976,15 @@ export function groupStockHoldings(assets) {
   }));
 }
 
+export function groupStockHoldings(assets) {
+  return groupTradedHoldings(assets, ["stock"]);
+}
+
 export function groupNonStockAssets(assets) {
   const groups = new Map();
 
   for (const asset of assets) {
-    if (asset.type === "stock") continue;
+    if (isTradedAssetType(asset.type)) continue;
 
     const type = asset.type || "other";
     const currency = asset.currency || "TWD";
@@ -1027,14 +1106,207 @@ export function getStockTickerCurrencySuggestion(ticker) {
   return null;
 }
 
+export const getTickerCurrencySuggestion = getStockTickerCurrencySuggestion;
+
 export function getMarketPriceGapPercent(asset) {
-  if (asset.type !== "stock") return null;
+  if (!isTradedAssetType(asset.type)) return null;
 
   const buyPrice = toNumber(asset.buyPrice);
   const marketPrice = toNumber(asset.marketPrice);
   if (buyPrice <= 0 || marketPrice <= 0) return null;
 
   return (Math.abs(marketPrice - buyPrice) / buyPrice) * 100;
+}
+
+function createValidationIssue(code, message) {
+  return { code, message };
+}
+
+function getExistingAverageCostGapPercent(asset, assets = [], existingAssetId = null) {
+  if (!isTradedAssetType(asset.type)) return null;
+
+  const buyPrice = Number(asset.buyPrice);
+  if (!Number.isFinite(buyPrice) || buyPrice <= 0) return null;
+
+  const normalizedTicker = String(asset.ticker || "").trim().toUpperCase();
+  const comparableAssets = assets.filter(
+    (item) =>
+      item.id !== existingAssetId &&
+      isTradedAssetType(item.type) &&
+      String(item.ticker || "").trim().toUpperCase() === normalizedTicker &&
+      (item.currency || BASE_CURRENCY) === (asset.currency || BASE_CURRENCY),
+  );
+  const totalShares = comparableAssets.reduce((total, item) => total + toNumber(item.shares), 0);
+  const totalCost = comparableAssets.reduce((total, item) => total + toNumber(item.shares) * toNumber(item.buyPrice), 0);
+
+  if (totalShares <= 0 || totalCost <= 0) return null;
+
+  const averageCost = totalCost / totalShares;
+  return (Math.abs(buyPrice - averageCost) / averageCost) * 100;
+}
+
+function getProjectedAssets(assets, asset, existingAssetId = null) {
+  if (!asset) return assets;
+
+  return existingAssetId
+    ? assets.map((item) => (item.id === existingAssetId ? asset : item))
+    : [asset, ...assets];
+}
+
+export function validateAssetInput(
+  asset,
+  { assets = [], exchangeRates = null, financialGoals = DEFAULT_FINANCIAL_GOALS, existingAssetId = null } = {},
+) {
+  const errors = [];
+  const warnings = [];
+  const type = String(asset?.type || "").trim();
+  const allowedTypes = ASSET_TYPES.map((item) => item.value);
+  const currency = String(asset?.currency || "").trim().toUpperCase();
+
+  if (!type) {
+    errors.push(createValidationIssue("missing-type", "請選擇資產類型。"));
+  } else if (!allowedTypes.includes(type)) {
+    errors.push(createValidationIssue("invalid-type", `type 必須是 ${allowedTypes.join(" / ")} 之一。`));
+  }
+
+  if (!currency) {
+    errors.push(createValidationIssue("missing-currency", "請選擇幣別。"));
+  } else if (!CURRENCIES.includes(currency)) {
+    errors.push(createValidationIssue("invalid-currency", `currency 必須是 ${CURRENCIES.join(" / ")} 之一。`));
+  }
+
+  if (isTradedAssetType(type)) {
+    const ticker = String(asset.ticker || "").trim().toUpperCase();
+    if (!ticker) {
+      errors.push(createValidationIssue("missing-ticker", `${getAssetTypeLabel(type)} 代號不可空白。`));
+    }
+
+    if (!isValidNumberInput(asset.shares)) {
+      errors.push(createValidationIssue("invalid-shares", "股數必須是有效數字。"));
+    } else if (Number(asset.shares) <= 0) {
+      errors.push(createValidationIssue("invalid-shares", "股數必須大於 0。"));
+    }
+
+    if (!isValidNumberInput(asset.buyPrice)) {
+      errors.push(createValidationIssue("invalid-buy-price", "購入價格必須是有效數字。"));
+    } else if (Number(asset.buyPrice) <= 0) {
+      errors.push(createValidationIssue("invalid-buy-price", "購入價格必須大於 0。"));
+    }
+
+    if (hasInputValue(asset.marketPrice)) {
+      if (!isValidNumberInput(asset.marketPrice)) {
+        errors.push(createValidationIssue("invalid-market-price", "目前市價必須是有效數字。"));
+      } else if (Number(asset.marketPrice) < 0) {
+        errors.push(createValidationIssue("invalid-market-price", "目前市價不可小於 0。"));
+      }
+    }
+
+    if (!asset.buyDate || !isValidDateOnly(asset.buyDate)) {
+      errors.push(createValidationIssue("invalid-buy-date", "購入日期需為 YYYY-MM-DD。"));
+    }
+
+    if (hasInputValue(asset.marketPriceUpdatedAt) && !isValidDateOnly(asset.marketPriceUpdatedAt)) {
+      warnings.push(createValidationIssue("invalid-market-price-date", "市價日期建議使用 YYYY-MM-DD。"));
+    }
+
+    const suggestedCurrency = getTickerCurrencySuggestion(ticker);
+    if (suggestedCurrency === "TWD" && currency && currency !== "TWD") {
+      warnings.push(
+        createValidationIssue("ticker-currency", "這個代號看起來像台股或台股 ETF，建議使用 TWD。"),
+      );
+    }
+
+    if (suggestedCurrency === "USD" && currency && currency !== "USD") {
+      warnings.push(
+        createValidationIssue("ticker-currency", "這個代號看起來像美股或美股 ETF，建議使用 USD。"),
+      );
+    }
+
+    const marketPriceGapPercent = getMarketPriceGapPercent(asset);
+    const averageCostGapPercent = getExistingAverageCostGapPercent(asset, assets, existingAssetId);
+    const priceGapPercent = Math.max(marketPriceGapPercent ?? 0, averageCostGapPercent ?? 0);
+    if (priceGapPercent > 80) {
+      warnings.push(createValidationIssue("price-gap", "價格差異過大，請確認幣別、股數或單價。"));
+    }
+  } else if (type === "loan") {
+    if (!String(asset.name || "").trim()) {
+      errors.push(createValidationIssue("missing-name", "請輸入貸款名稱。"));
+    }
+
+    if (!isValidNumberInput(asset.principal)) {
+      errors.push(createValidationIssue("invalid-principal", "本金必須是有效數字。"));
+    } else if (Number(asset.principal) <= 0) {
+      errors.push(createValidationIssue("invalid-principal", "本金必須大於 0。"));
+    }
+
+    if (!isValidNumberInput(asset.years)) {
+      errors.push(createValidationIssue("invalid-years", "年限必須是有效數字。"));
+    } else if (Number(asset.years) <= 0) {
+      errors.push(createValidationIssue("invalid-years", "年限必須大於 0。"));
+    }
+
+    if (!isValidNumberInput(asset.annualRate)) {
+      errors.push(createValidationIssue("invalid-annual-rate", "年利率必須是有效數字。"));
+    } else if (Number(asset.annualRate) < 0) {
+      errors.push(createValidationIssue("invalid-annual-rate", "年利率不可小於 0。"));
+    }
+
+    if (!asset.startDate || !isValidDateOnly(asset.startDate)) {
+      errors.push(createValidationIssue("invalid-start-date", "起始日期需為 YYYY-MM-DD。"));
+    }
+  } else if (type && allowedTypes.includes(type)) {
+    if (!String(asset.name || "").trim()) {
+      errors.push(createValidationIssue("missing-name", "請輸入名稱。"));
+    }
+
+    if (!isValidNumberInput(asset.amount)) {
+      errors.push(createValidationIssue("invalid-amount", "金額必須是有效數字。"));
+    } else if (Number(asset.amount) < 0) {
+      errors.push(createValidationIssue("invalid-amount", "金額不可小於 0。"));
+    }
+  }
+
+  if (errors.length === 0 && exchangeRates && isTradedAssetType(type)) {
+    const projectedAssets = getProjectedAssets(assets, asset, existingAssetId);
+    const concentrationItem = getConcentrationItems({
+      assets: projectedAssets,
+      exchangeRates,
+      financialGoals,
+    }).find(
+      (item) =>
+        item.type === type &&
+        item.ticker === String(asset.ticker || "").trim().toUpperCase() &&
+        item.currency === (asset.currency || BASE_CURRENCY),
+    );
+
+    if (concentrationItem?.isWarning) {
+      warnings.push(
+        createValidationIssue(
+          "concentration",
+          `${concentrationItem.ticker} 占總資產超過 ${formatNumber(
+            parseFinancialGoals(financialGoals).singleHoldingLimitPercent,
+          )}%，請確認集中度。`,
+        ),
+      );
+    }
+  }
+
+  if (errors.length === 0 && exchangeRates && isRiskAssetType(type)) {
+    const projectedAssets = getProjectedAssets(assets, asset, existingAssetId);
+    const goals = parseFinancialGoals(financialGoals);
+    const goalMetrics = getGoalMetrics({ assets: projectedAssets, exchangeRates, financialGoals: goals });
+
+    if (goals.stockExposureLimitPercent > 0 && goalMetrics.riskExposurePercent > goals.stockExposureLimitPercent) {
+      warnings.push(
+        createValidationIssue(
+          "risk-exposure",
+          `股票 / ETF / 基金曝險 ${formatNumber(goalMetrics.riskExposurePercent)}%，高於設定上限。`,
+        ),
+      );
+    }
+  }
+
+  return { errors, warnings };
 }
 
 export function getAssetAbsoluteAmount(asset) {
@@ -1051,12 +1323,14 @@ export function getAssetValueInTwd(asset, exchangeRateStore) {
 export function getConcentrationItems({ assets, exchangeRates, financialGoals }) {
   const goals = parseFinancialGoals(financialGoals);
   const twdSummary = summarizeInBaseCurrency(summarizeByCurrency(assets), exchangeRates);
-  const items = groupStockHoldings(assets).map((holding) => {
+  const items = groupTradedHoldings(assets).map((holding) => {
     const rateToTwd = getRateToTwd(exchangeRates, holding.currency);
     const valueTwd = rateToTwd ? holding.totalCost * rateToTwd : null;
 
     return {
       key: holding.key,
+      type: holding.type,
+      typeLabel: holding.typeLabel,
       ticker: holding.ticker,
       currency: holding.currency,
       valueTwd,
@@ -1099,7 +1373,7 @@ export function getGoalMetrics({ assets, exchangeRates, financialGoals }) {
       cashValueTwd += valueTwd;
     }
 
-    if (asset.type === "stock" || asset.type === "fund") {
+    if (isRiskAssetType(asset.type)) {
       riskAssetValueTwd += valueTwd;
     }
   }
@@ -1150,13 +1424,13 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
 
   const staleStockAssets = assets.filter(
     (asset) =>
-      asset.type === "stock" &&
+      isTradedAssetType(asset.type) &&
       (getDaysSince(asset.marketPriceUpdatedAt || getAssetUpdatedAt(asset), now) ?? 0) > STALE_STOCK_PRICE_DAYS,
   );
   if (staleStockAssets.length > 0) {
     items.push({
       key: "stale-stock-price",
-      label: `${staleStockAssets.length} 筆股票超過 ${STALE_STOCK_PRICE_DAYS} 天未更新市價`,
+      label: `${staleStockAssets.length} 筆股票 / ETF 超過 ${STALE_STOCK_PRICE_DAYS} 天未更新市價`,
     });
   }
 
@@ -1186,8 +1460,32 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
   if (priceGapAssets.length > 0) {
     items.push({
       key: "price-gap",
-      label: `${priceGapAssets.length} 筆股票成本與目前市價差距超過 80%，請確認資料`,
+      label: `${priceGapAssets.length} 筆股票 / ETF 成本與目前市價差距超過 80%，請確認資料`,
     });
+  }
+
+  const validationWarnings = assets.flatMap((asset) =>
+    validateAssetInput(asset, {
+      assets,
+      exchangeRates,
+      financialGoals: goals,
+      existingAssetId: asset.id,
+    }).warnings
+      .filter((issue) => issue.code === "ticker-currency")
+      .map((issue) => ({
+        key: `validation-${asset.id}-${issue.code}`,
+        label: `${getAssetDisplayName(asset)}：${issue.message}`,
+      })),
+  );
+
+  if (validationWarnings.length > 0) {
+    items.push(...validationWarnings.slice(0, 5));
+    if (validationWarnings.length > 5) {
+      items.push({
+        key: "validation-more",
+        label: `另有 ${validationWarnings.length - 5} 項資料可疑項目`,
+      });
+    }
   }
 
   const concentratedItems = concentrationItems.filter((item) => item.isWarning);
@@ -1213,7 +1511,7 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
   if (goals.stockExposureLimitPercent > 0 && goalMetrics.riskExposurePercent > goals.stockExposureLimitPercent) {
     items.push({
       key: "risk-exposure",
-      label: `股票 / 基金曝險 ${formatNumber(goalMetrics.riskExposurePercent)}%，高於設定上限 ${formatNumber(
+      label: `股票 / ETF / 基金曝險 ${formatNumber(goalMetrics.riskExposurePercent)}%，高於設定上限 ${formatNumber(
         goals.stockExposureLimitPercent,
       )}%`,
     });

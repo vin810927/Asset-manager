@@ -20,11 +20,11 @@ import {
   getCsvExportFileName,
   getLatestUpdatedAt,
   getLoanSnapshot,
-  getMarketPriceGapPercent,
   getRateToTwd,
-  getStockTickerCurrencySuggestion,
+  getTickerCurrencySuggestion,
   groupNonStockAssets,
-  groupStockHoldings,
+  groupTradedHoldings,
+  isTradedAssetType,
   loadAssets,
   loadExchangeRates,
   loadFinancialGoals,
@@ -37,6 +37,7 @@ import {
   summarizeByCurrency,
   summarizeInBaseCurrency,
   toNumber,
+  validateAssetInput,
 } from "./utils.js";
 
 function getTodayDate() {
@@ -98,12 +99,7 @@ function buildAssetFromForm(form, existingAsset = null) {
     updatedAt: new Date().toISOString(),
   };
 
-  if (form.type === "stock") {
-    if (!form.ticker.trim()) throw new Error("請輸入股票代號。");
-    if (toNumber(form.shares) <= 0) throw new Error("請輸入有效股數。");
-    if (toNumber(form.buyPrice) < 0) throw new Error("請輸入有效購入價格。");
-    if (form.marketPrice && toNumber(form.marketPrice) < 0) throw new Error("請輸入有效目前市價。");
-
+  if (isTradedAssetType(form.type)) {
     return {
       ...base,
       ticker: form.ticker.trim().toUpperCase(),
@@ -120,12 +116,6 @@ function buildAssetFromForm(form, existingAsset = null) {
   }
 
   if (form.type === "loan") {
-    if (!form.name.trim()) throw new Error("請輸入貸款名稱。");
-    if (toNumber(form.principal) <= 0) throw new Error("請輸入有效本金。");
-    if (toNumber(form.years) <= 0) throw new Error("請輸入有效年限。");
-    if (toNumber(form.annualRate) < 0) throw new Error("請輸入有效年利率。");
-    if (!form.startDate) throw new Error("請輸入貸款起始日期。");
-
     return {
       ...base,
       name: form.name.trim(),
@@ -136,9 +126,6 @@ function buildAssetFromForm(form, existingAsset = null) {
     };
   }
 
-  if (!form.name.trim()) throw new Error("請輸入名稱。");
-  if (toNumber(form.amount) < 0) throw new Error("請輸入有效金額。");
-
   return {
     ...base,
     name: form.name.trim(),
@@ -148,8 +135,8 @@ function buildAssetFromForm(form, existingAsset = null) {
 
 function AssetFormFields({ form, onFieldChange, onTypeChange }) {
   function handleTickerChange(value) {
-    const previousSuggestion = getStockTickerCurrencySuggestion(form.ticker);
-    const nextSuggestion = getStockTickerCurrencySuggestion(value);
+    const previousSuggestion = getTickerCurrencySuggestion(form.ticker);
+    const nextSuggestion = getTickerCurrencySuggestion(value);
 
     onFieldChange("ticker", value);
 
@@ -184,15 +171,15 @@ function AssetFormFields({ form, onFieldChange, onTypeChange }) {
         </label>
       </div>
 
-      {form.type === "stock" && (
+      {isTradedAssetType(form.type) && (
         <>
           <div className="form-row compact">
             <label>
-              股票代號
+              {getAssetTypeLabel(form.type)} 代號
               <input
                 value={form.ticker}
                 onChange={(event) => handleTickerChange(event.target.value)}
-                placeholder="例如 2330、AAPL"
+                placeholder="例如 2330、0050、VOO"
               />
             </label>
             <label>
@@ -312,7 +299,7 @@ function AssetFormFields({ form, onFieldChange, onTypeChange }) {
         </>
       )}
 
-      {!["stock", "loan"].includes(form.type) && (
+      {!isTradedAssetType(form.type) && form.type !== "loan" && (
         <div className="form-row compact">
           <label>
             名稱
@@ -464,7 +451,7 @@ function downloadTextFile(content, fileName, mimeType) {
 }
 
 function getAssetSortTimestamp(asset) {
-  const dateValue = asset.updatedAt || (asset.type === "stock" ? asset.buyDate : asset.type === "loan" ? asset.startDate : asset.createdAt);
+  const dateValue = asset.updatedAt || (isTradedAssetType(asset.type) ? asset.buyDate : asset.type === "loan" ? asset.startDate : asset.createdAt);
   const timestamp = new Date(dateValue || asset.createdAt || 0).getTime();
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
@@ -474,7 +461,7 @@ function getGroupSortTimestamp(group) {
 }
 
 function getEntrySortAmount(asset) {
-  if (asset.type === "stock") return toNumber(asset.shares) * toNumber(asset.buyPrice);
+  if (isTradedAssetType(asset.type)) return toNumber(asset.shares) * toNumber(asset.buyPrice);
   if (asset.type === "loan") return getLoanSnapshot(asset).remainingPrincipal;
   return Math.abs(toNumber(asset.amountValue ?? asset.amount));
 }
@@ -572,7 +559,7 @@ function App() {
     saveFinancialGoals(financialGoals);
   }, [financialGoals]);
 
-  const stockHoldings = useMemo(() => groupStockHoldings(assets), [assets]);
+  const tradedHoldings = useMemo(() => groupTradedHoldings(assets), [assets]);
   const currencySummary = useMemo(() => summarizeByCurrency(assets), [assets]);
   const twdSummary = useMemo(
     () => summarizeInBaseCurrency(currencySummary, exchangeRates),
@@ -589,15 +576,15 @@ function App() {
     () => assets.find((asset) => asset.id === assetToDeleteId) ?? null,
     [assetToDeleteId, assets],
   );
-  const stockDetailGroups = useMemo(
+  const tradedDetailGroups = useMemo(
     () =>
-      stockHoldings.map((holding) => {
+      tradedHoldings.map((holding) => {
         const rateToTwd = getRateToTwd(exchangeRates, holding.currency);
 
         return {
-          key: `stock_${holding.key}`,
-          type: "stock",
-          typeLabel: "股票",
+          key: `traded_${holding.key}`,
+          type: holding.type,
+          typeLabel: holding.typeLabel,
           name: holding.ticker,
           currency: holding.currency,
           totalAmount: holding.totalCost,
@@ -611,7 +598,7 @@ function App() {
           entries: holding.lots,
         };
       }),
-    [exchangeRates, stockHoldings],
+    [exchangeRates, tradedHoldings],
   );
   const otherDetailGroups = useMemo(
     () =>
@@ -648,10 +635,10 @@ function App() {
   );
   const assetDetailGroups = useMemo(
     () =>
-      [...stockDetailGroups, ...otherDetailGroups].sort(
+      [...tradedDetailGroups, ...otherDetailGroups].sort(
         (a, b) => Math.abs(b.baseValue ?? 0) - Math.abs(a.baseValue ?? 0),
       ),
-    [otherDetailGroups, stockDetailGroups],
+    [otherDetailGroups, tradedDetailGroups],
   );
   const assetTypeFilters = useMemo(() => [{ value: "all", label: "全部" }, ...ASSET_TYPES], []);
   const assetCurrencyOptions = useMemo(
@@ -737,6 +724,8 @@ function App() {
         const primaryText =
           group.type === "stock"
             ? `${group.detailGroups.length} 檔股票`
+            : group.type === "etf"
+              ? `${group.detailGroups.length} 檔ETF`
             : `${group.detailGroups.length} 組${group.typeLabel}`;
         const secondaryText = `${group.count} 筆明細${group.hasMissingRate ? " · 缺匯率" : ""}`;
 
@@ -801,50 +790,24 @@ function App() {
     setAssetSortMode("value");
   }
 
-  function getProjectedConcentrationWarning(asset, existingAsset = null) {
-    if (asset.type !== "stock") return null;
+  function confirmAssetValidation(draft, existingAsset = null) {
+    const validation = validateAssetInput(draft, {
+      assets,
+      exchangeRates,
+      financialGoals,
+      existingAssetId: existingAsset?.id ?? null,
+    });
 
-    const projectedAssets = existingAsset
-      ? assets.map((item) => (item.id === existingAsset.id ? asset : item))
-      : [asset, ...assets];
-    const projectedSummary = summarizeInBaseCurrency(summarizeByCurrency(projectedAssets), exchangeRates);
-    const holding = groupStockHoldings(projectedAssets).find(
-      (item) => item.ticker === asset.ticker && item.currency === asset.currency,
-    );
-    const rateToTwd = getRateToTwd(exchangeRates, asset.currency);
-    const valueTwd = holding && rateToTwd ? holding.totalCost * rateToTwd : null;
-
-    if (!valueTwd || projectedSummary.assets <= 0) return null;
-
-    const percent = (valueTwd / projectedSummary.assets) * 100;
-    if (percent <= financialGoals.singleHoldingLimitPercent) return null;
-
-    return `${asset.ticker} 儲存後約占總資產 ${formatNumber(percent)}%，高於單一標的上限 ${formatNumber(
-      financialGoals.singleHoldingLimitPercent,
-    )}%。`;
-  }
-
-  function confirmAssetWarnings(asset, existingAsset = null) {
-    const warnings = [];
-
-    if (asset.type === "stock") {
-      const suggestedCurrency = getStockTickerCurrencySuggestion(asset.ticker);
-      if (suggestedCurrency && asset.currency !== suggestedCurrency) {
-        warnings.push(`股票代號 ${asset.ticker} 看起來較像 ${suggestedCurrency} 標的，目前幣別為 ${asset.currency}。`);
-      }
-
-      const priceGapPercent = getMarketPriceGapPercent(asset);
-      if (priceGapPercent !== null && priceGapPercent > 80) {
-        warnings.push(`股票 ${asset.ticker} 的成本單價與目前市價差距 ${formatNumber(priceGapPercent)}%，請確認資料。`);
-      }
-
-      const concentrationWarning = getProjectedConcentrationWarning(asset, existingAsset);
-      if (concentrationWarning) warnings.push(concentrationWarning);
+    if (validation.errors.length > 0) {
+      window.alert(`資料錯誤：\n\n${validation.errors.map((issue) => `- ${issue.message}`).join("\n")}`);
+      return false;
     }
 
-    if (warnings.length === 0) return true;
+    if (validation.warnings.length === 0) return true;
 
-    return window.confirm(`資料確認提示：\n\n${warnings.map((warning) => `- ${warning}`).join("\n")}\n\n仍要儲存？`);
+    return window.confirm(
+      `資料確認提示：\n\n${validation.warnings.map((issue) => `- ${issue.message}`).join("\n")}\n\n仍要儲存？`,
+    );
   }
 
   function getExchangeRateDraft(currency) {
@@ -894,8 +857,8 @@ function App() {
     event.preventDefault();
 
     try {
+      if (!confirmAssetValidation(form)) return;
       const asset = buildAssetFromForm(form);
-      if (!confirmAssetWarnings(asset)) return;
       setAssets((current) => [asset, ...current]);
       resetForm(form.type);
       setIsAssetFormOpen(false);
@@ -914,8 +877,8 @@ function App() {
     }
 
     try {
+      if (!confirmAssetValidation(editForm, editingAsset)) return;
       const asset = buildAssetFromForm(editForm, editingAsset);
-      if (!confirmAssetWarnings(asset, editingAsset)) return;
       setAssets((current) => current.map((item) => (item.id === editingAsset.id ? asset : item)));
       cancelEditing();
     } catch (error) {
@@ -1066,9 +1029,15 @@ function App() {
     if (!file) return;
 
     try {
-      const preview = parseAssetsCsv(await file.text());
+      const preview = parseAssetsCsv(await file.text(), {
+        assets,
+        exchangeRates,
+        financialGoals,
+      });
       setCsvImportPreview(preview);
-      setDataToolStatus(`CSV 解析完成：可匯入 ${preview.validCount} 筆，錯誤 ${preview.errorCount} 筆。`);
+      setDataToolStatus(
+        `CSV 解析完成：可匯入 ${preview.validCount} 筆，錯誤 ${preview.errorCount} 筆，提醒 ${preview.warningCount} 筆。`,
+      );
     } catch (error) {
       setCsvImportPreview(null);
       setDataToolStatus(error.message || "CSV 匯入失敗：檔案格式不正確。");
@@ -1082,6 +1051,13 @@ function App() {
 
     if (csvImportPreview.assets.length === 0) {
       setDataToolStatus("CSV 沒有可匯入的有效資料。");
+      return;
+    }
+
+    if (
+      csvImportPreview.warningCount > 0 &&
+      !window.confirm(`CSV 仍有 ${csvImportPreview.warningCount} 筆 warning，請確認是否繼續匯入？`)
+    ) {
       return;
     }
 
@@ -1425,7 +1401,7 @@ function App() {
                       <div>
                         <strong>{item.ticker}</strong>
                         <small>
-                          {item.currency} · {formatNumber(item.totalShares)} 股
+                          {item.typeLabel} · {item.currency} · {formatNumber(item.totalShares)} 股
                         </small>
                       </div>
                       {item.isWarning && <span className="risk-pill">高集中</span>}
@@ -1561,28 +1537,28 @@ function App() {
                   <div className="detail-list">
                     {sortAssetEntries(group.entries, assetSortMode).map((asset) => {
                       const loanSnapshot = asset.type === "loan" ? getLoanSnapshot(asset) : null;
-                      const isStock = asset.type === "stock";
-                      const stockCost = isStock ? toNumber(asset.shares) * toNumber(asset.buyPrice) : 0;
-                      const detailDate = isStock
+                      const isTradedAsset = isTradedAssetType(asset.type);
+                      const tradedCost = isTradedAsset ? toNumber(asset.shares) * toNumber(asset.buyPrice) : 0;
+                      const detailDate = isTradedAsset
                         ? asset.buyDate || "未填日期"
                         : asset.createdAt
                           ? new Date(asset.createdAt).toLocaleDateString("zh-TW")
                           : "未填日期";
-                      const detailAmount = isStock
-                        ? formatMoney(stockCost, asset.currency)
+                      const detailAmount = isTradedAsset
+                        ? formatMoney(tradedCost, asset.currency)
                         : loanSnapshot
                           ? `剩餘 ${formatMoney(loanSnapshot.remainingPrincipal, asset.currency)}`
                           : formatMoney(asset.amountValue, asset.currency);
-                      const compactDetailAmount = isStock
-                        ? formatCompactMoney(stockCost, asset.currency)
+                      const compactDetailAmount = isTradedAsset
+                        ? formatCompactMoney(tradedCost, asset.currency)
                         : loanSnapshot
                           ? `剩餘 ${formatCompactMoney(loanSnapshot.remainingPrincipal, asset.currency)}`
                           : formatCompactMoney(asset.amountValue, asset.currency);
                       const marketPriceText =
-                        isStock && toNumber(asset.marketPrice) > 0
+                        isTradedAsset && toNumber(asset.marketPrice) > 0
                           ? ` · 市價 ${formatMoney(asset.marketPrice, asset.currency)}`
                           : "";
-                      const detailMeta = isStock
+                      const detailMeta = isTradedAsset
                         ? `${formatNumber(asset.shares)} 股 · 單價 ${formatMoney(asset.buyPrice, asset.currency)}${marketPriceText}`
                         : loanSnapshot
                           ? `本金 ${formatCompactMoney(asset.principal, asset.currency)} · 月付 ${formatCompactMoney(
@@ -1740,7 +1716,8 @@ function App() {
                     <small>只支援 Asset Agent 標準 CSV，不支援銀行或券商原始檔。</small>
                   </div>
                   <span>
-                    可匯入 {csvImportPreview.validCount} 筆 · 錯誤 {csvImportPreview.errorCount} 筆
+                    可匯入 {csvImportPreview.validCount} 筆 · 錯誤 {csvImportPreview.errorCount} 筆 · 提醒{" "}
+                    {csvImportPreview.warningCount} 筆
                   </span>
                 </div>
 
@@ -1751,6 +1728,19 @@ function App() {
                       {csvImportPreview.errors.map((error) => (
                         <li key={`${error.rowNumber}-${error.message}`}>
                           第 {error.rowNumber} 列：{error.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {csvImportPreview.warnings.length > 0 && (
+                  <div className="csv-warning-box">
+                    <strong>提醒列</strong>
+                    <ul>
+                      {csvImportPreview.warnings.map((warning) => (
+                        <li key={`${warning.rowNumber}-${warning.message}`}>
+                          第 {warning.rowNumber} 列：{warning.message}
                         </li>
                       ))}
                     </ul>

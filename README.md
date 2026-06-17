@@ -11,17 +11,19 @@
 - 支援資產類型：
   - 現金
   - 股票
+  - ETF
   - 基金
   - 貸款
   - 其他
-- 新增股票時只需輸入：
+- 新增股票與 ETF 時只需輸入：
   - 股票代號
   - 股數
   - 購入價格
   - 購入日期
   - 幣別
-- 同一股票代號會在明細中合併顯示
-- 股票分次購入資料保留在資產明細中，可展開查看
+- ETF 獨立於股票與基金，資產配置、明細篩選與集中度風險會分開呈現
+- 同一股票 / ETF 代號會在明細中合併顯示
+- 股票與 ETF 分次購入資料保留在資產明細中，可展開查看
 - 資產總覽提供配置比例條與分類摘要，可點選股票、現金等大類篩選明細
 - 同類型、同幣別、同名稱的非股票資產會合併顯示，明細仍可展開查看
 - 資產明細可依關鍵字、類型、幣別、狀態與排序快速篩選
@@ -30,6 +32,7 @@
 - 支援手動編輯匯率，方便在公開資料延遲或需要保守估值時覆寫
 - 支援本地資料可靠性提醒、理財目標設定與 JSON 匯入匯出備份
 - 支援 Asset Agent 標準 CSV 匯出、CSV 範本下載與匯入 preview
+- 支援新增表單與 CSV 匯入共用的資料驗證，error 會阻止寫入，warning 需人工確認
 - 新增貸款時需輸入：
   - 貸款名稱
   - 本金
@@ -106,7 +109,7 @@ asset-agent/
 ```js
 {
   id: string,
-  type: "cash" | "stock" | "fund" | "loan" | "other",
+  type: "cash" | "stock" | "etf" | "fund" | "loan" | "other",
   currency: "TWD" | "USD" | "JPY",
   createdAt: string,
   updatedAt: string,
@@ -149,6 +152,21 @@ asset-agent/
 }
 ```
 
+ETF 資產與股票共用 ticker、shares、buyPrice、buyDate 等欄位，但 `type` 使用 `"etf"`，讓 ETF 在資產配置與集中度風險中獨立呈現：
+
+```js
+{
+  type: "etf",
+  ticker: "0050",
+  shares: 20,
+  buyPrice: 160,
+  marketPrice: 162, // optional, manual input
+  marketPriceUpdatedAt: "2026-06-15",
+  buyDate: "2026-06-10",
+  note: ""
+}
+```
+
 貸款：
 
 ```js
@@ -176,6 +194,24 @@ id,type,name,ticker,currency,amount,shares,buyPrice,marketPrice,marketPriceUpdat
 ```
 
 目前 CSV 不支援銀行、券商或信用卡原始檔，也不支援 xlsx。銀行或券商資料需先整理成 Asset Agent 標準 CSV。
+
+CSV 匯入 preview 會區分：
+
+- error：例如不合法 type、缺少 ticker、股數或購入價格不是有效數字。error row 不會進入 assets。
+- warning：例如數字代號使用 USD、英文代號使用 TWD、價格差異過大或集中度偏高。warning row 可匯入，但確認匯入前會再次提醒。
+
+## 資料驗證規則
+
+新增表單與 CSV 匯入共用同一套驗證 helper：
+
+- 股票 / ETF 的 ticker 不可空白
+- 股票 / ETF 的 shares 與 buyPrice 必須大於 0
+- 貸款 principal、years 必須大於 0，annualRate 不可小於 0
+- 日期欄位建議使用 `YYYY-MM-DD`
+- 純數字 ticker 會提示可能應使用 TWD
+- 純英文字母 ticker 會提示可能應使用 USD
+- buyPrice 與手動市價或同 ticker 既有平均成本差距超過 80% 時會提示確認
+- 單一標的與股票 / ETF / 基金總曝險超過理財目標門檻時會提示確認
 
 ## 未來方向
 

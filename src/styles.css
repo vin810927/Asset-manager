@@ -350,7 +350,8 @@ h2 {
   white-space: nowrap;
 }
 
-.csv-error-box {
+.csv-error-box,
+.csv-warning-box {
   display: grid;
   gap: 6px;
   border: 1px solid var(--warning-border);
@@ -360,11 +361,19 @@ h2 {
   padding: 10px;
 }
 
-.csv-error-box strong {
+.csv-warning-box {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.csv-error-box strong,
+.csv-warning-box strong {
   font-size: 0.84rem;
 }
 
-.csv-error-box ul {
+.csv-error-box ul,
+.csv-warning-box ul {
   display: grid;
   max-height: 142px;
   gap: 5px;
