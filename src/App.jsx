@@ -13,11 +13,16 @@ import {
   formatMoney,
   formatNumber,
   formatRate,
+  getAssetSubmitState,
   getAssetDisplayName,
   getAssetTypeLabel,
   getAssetUpdatedAt,
+  getAssetValidationBadges,
+  getAssetValidationFingerprint,
   getConcentrationItems,
+  getCsvImportState,
   getCsvExportFileName,
+  getCsvPreviewFingerprint,
   getLatestUpdatedAt,
   getLoanSnapshot,
   getRateToTwd,
@@ -66,6 +71,26 @@ function createEmptyForm(type = "cash") {
 
 function toFormValue(value) {
   return value === undefined || value === null ? "" : String(value);
+}
+
+function ChevronIcon({ isOpen }) {
+  return <span className={`chevron-icon${isOpen ? " is-open" : ""}`} aria-hidden="true" />;
+}
+
+function StyleModeMark({ mode }) {
+  return <span className={`style-mode-mark is-${mode}`} aria-hidden="true" />;
+}
+
+function RefreshIcon() {
+  return <span className="refresh-icon" aria-hidden="true" />;
+}
+
+function LoadingIcon() {
+  return <span className="loading-icon" aria-hidden="true" />;
+}
+
+function CloseIcon() {
+  return <span className="close-icon" aria-hidden="true" />;
 }
 
 function createFormFromAsset(asset) {
@@ -130,6 +155,29 @@ function buildAssetFromForm(form, existingAsset = null) {
     ...base,
     name: form.name.trim(),
     amount: toNumber(form.amount),
+  };
+}
+
+function createValidationDraftFromForm(form, existingAsset = null) {
+  return {
+    id: existingAsset?.id ?? "form-draft",
+    type: form.type,
+    currency: form.currency,
+    name: form.name,
+    amount: form.amount,
+    ticker: form.ticker,
+    shares: form.shares,
+    buyPrice: form.buyPrice,
+    marketPrice: form.marketPrice,
+    marketPriceUpdatedAt: form.marketPriceUpdatedAt,
+    buyDate: form.buyDate,
+    principal: form.principal,
+    years: form.years,
+    annualRate: form.annualRate,
+    startDate: form.startDate,
+    note: form.note,
+    createdAt: existingAsset?.createdAt,
+    updatedAt: existingAsset?.updatedAt,
   };
 }
 
@@ -330,11 +378,54 @@ function AssetFormFields({ form, onFieldChange, onTypeChange }) {
   );
 }
 
+function ValidationSummary({ validation, submitState, confirmed, onConfirmWarnings, notice }) {
+  const errors = validation.errors ?? [];
+  const warnings = validation.warnings ?? [];
+
+  if (errors.length === 0 && warnings.length === 0 && !notice) return null;
+
+  return (
+    <div className="validation-summary" aria-live="polite">
+      {errors.length > 0 && (
+        <div className="validation-box is-error">
+          <strong>需要修正</strong>
+          <ul>
+            {errors.map((issue) => (
+              <li key={`${issue.code}-${issue.message}`}>{issue.message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="validation-box is-warning">
+          <div className="validation-box-header">
+            <strong>資料提醒</strong>
+            {confirmed && <span>已確認</span>}
+          </div>
+          <ul>
+            {warnings.map((issue) => (
+              <li key={`${issue.code}-${issue.message}`}>{issue.message}</li>
+            ))}
+          </ul>
+          {submitState.needsWarningConfirmation && (
+            <button className="warning-confirm-button secondary-action" type="button" onClick={onConfirmWarnings}>
+              我已確認，仍要繼續
+            </button>
+          )}
+        </div>
+      )}
+
+      {notice && <p className="validation-notice">{notice}</p>}
+    </div>
+  );
+}
+
 const STYLE_STORAGE_KEY = "asset-agent.style-mode.v1";
 const STYLE_MODES = [
-  { value: "mist", label: "霧藍", mark: "◐" },
-  { value: "clear", label: "清爽", mark: "○" },
-  { value: "graphite", label: "石墨", mark: "●" },
+  { value: "mist", label: "霧藍" },
+  { value: "clear", label: "清爽" },
+  { value: "graphite", label: "石墨" },
 ];
 const PIE_COLORS = ["#365f89", "#7c8da3", "#b7815f", "#6c7a89", "#486b7a", "#8f6f8f"];
 const ASSET_SORT_OPTIONS = [
@@ -528,6 +619,10 @@ function App() {
   const [dataToolStatus, setDataToolStatus] = useState("");
   const [form, setForm] = useState(() => createEmptyForm());
   const [editForm, setEditForm] = useState(() => createEmptyForm());
+  const [confirmedAddWarningFingerprint, setConfirmedAddWarningFingerprint] = useState("");
+  const [confirmedEditWarningFingerprint, setConfirmedEditWarningFingerprint] = useState("");
+  const [addFormNotice, setAddFormNotice] = useState("");
+  const [editFormNotice, setEditFormNotice] = useState("");
   const [editingAssetId, setEditingAssetId] = useState(null);
   const [assetToDeleteId, setAssetToDeleteId] = useState(null);
   const [expandedAssetGroups, setExpandedAssetGroups] = useState({});
@@ -541,6 +636,7 @@ function App() {
   const importFileInputRef = useRef(null);
   const csvImportFileInputRef = useRef(null);
   const [csvImportPreview, setCsvImportPreview] = useState(null);
+  const [confirmedCsvWarningFingerprint, setConfirmedCsvWarningFingerprint] = useState("");
 
   useEffect(() => {
     saveAssets(assets);
@@ -575,6 +671,59 @@ function App() {
   const assetToDelete = useMemo(
     () => assets.find((asset) => asset.id === assetToDeleteId) ?? null,
     [assetToDeleteId, assets],
+  );
+  const addDraftAsset = useMemo(() => createValidationDraftFromForm(form), [form]);
+  const addFormValidation = useMemo(
+    () =>
+      validateAssetInput(addDraftAsset, {
+        assets,
+        exchangeRates,
+        financialGoals,
+      }),
+    [addDraftAsset, assets, exchangeRates, financialGoals],
+  );
+  const addValidationFingerprint = useMemo(
+    () => getAssetValidationFingerprint(addDraftAsset, addFormValidation),
+    [addDraftAsset, addFormValidation],
+  );
+  const isAddWarningConfirmed =
+    addFormValidation.warnings.length > 0 && confirmedAddWarningFingerprint === addValidationFingerprint;
+  const addSubmitState = useMemo(
+    () => getAssetSubmitState(addFormValidation, isAddWarningConfirmed),
+    [addFormValidation, isAddWarningConfirmed],
+  );
+  const editDraftAsset = useMemo(
+    () => (editingAsset ? createValidationDraftFromForm(editForm, editingAsset) : null),
+    [editForm, editingAsset],
+  );
+  const editFormValidation = useMemo(
+    () =>
+      editDraftAsset
+        ? validateAssetInput(editDraftAsset, {
+            assets,
+            exchangeRates,
+            financialGoals,
+            existingAssetId: editingAsset?.id ?? null,
+          })
+        : { errors: [], warnings: [] },
+    [assets, editDraftAsset, editingAsset?.id, exchangeRates, financialGoals],
+  );
+  const editValidationFingerprint = useMemo(
+    () => getAssetValidationFingerprint(editDraftAsset, editFormValidation),
+    [editDraftAsset, editFormValidation],
+  );
+  const isEditWarningConfirmed =
+    editFormValidation.warnings.length > 0 && confirmedEditWarningFingerprint === editValidationFingerprint;
+  const editSubmitState = useMemo(
+    () => getAssetSubmitState(editFormValidation, isEditWarningConfirmed),
+    [editFormValidation, isEditWarningConfirmed],
+  );
+  const csvWarningFingerprint = useMemo(() => getCsvPreviewFingerprint(csvImportPreview), [csvImportPreview]);
+  const isCsvWarningConfirmed =
+    csvImportPreview?.warningCount > 0 && confirmedCsvWarningFingerprint === csvWarningFingerprint;
+  const csvImportState = useMemo(
+    () => getCsvImportState(csvImportPreview, isCsvWarningConfirmed),
+    [csvImportPreview, isCsvWarningConfirmed],
   );
   const tradedDetailGroups = useMemo(
     () =>
@@ -790,24 +939,24 @@ function App() {
     setAssetSortMode("value");
   }
 
-  function confirmAssetValidation(draft, existingAsset = null) {
-    const validation = validateAssetInput(draft, {
-      assets,
-      exchangeRates,
-      financialGoals,
-      existingAssetId: existingAsset?.id ?? null,
-    });
+  function focusAttentionItem(item) {
+    if (!item.focusQuery) return;
 
-    if (validation.errors.length > 0) {
-      window.alert(`資料錯誤：\n\n${validation.errors.map((issue) => `- ${issue.message}`).join("\n")}`);
-      return false;
-    }
+    setAssetSearchQuery(item.focusQuery);
+    setAssetTypeFilter("all");
+    setAssetCurrencyFilter("all");
+    setAssetStatusFilter("all");
+    setAssetSortMode("value");
+  }
 
-    if (validation.warnings.length === 0) return true;
+  function confirmAddWarnings() {
+    setConfirmedAddWarningFingerprint(addValidationFingerprint);
+    setAddFormNotice("已確認提醒，可繼續新增。");
+  }
 
-    return window.confirm(
-      `資料確認提示：\n\n${validation.warnings.map((issue) => `- ${issue.message}`).join("\n")}\n\n仍要儲存？`,
-    );
+  function confirmEditWarnings() {
+    setConfirmedEditWarningFingerprint(editValidationFingerprint);
+    setEditFormNotice("已確認提醒，可繼續儲存。");
   }
 
   function getExchangeRateDraft(currency) {
@@ -817,6 +966,7 @@ function App() {
   }
 
   function updateForm(field, value) {
+    setAddFormNotice("");
     setForm((current) => ({
       ...current,
       [field]: value,
@@ -824,6 +974,7 @@ function App() {
   }
 
   function updateEditForm(field, value) {
+    setEditFormNotice("");
     setEditForm((current) => ({
       ...current,
       [field]: value,
@@ -831,6 +982,8 @@ function App() {
   }
 
   function resetForm(nextType = form.type) {
+    setConfirmedAddWarningFingerprint("");
+    setAddFormNotice("");
     setForm(createEmptyForm(nextType));
   }
 
@@ -839,25 +992,40 @@ function App() {
   }
 
   function handleEditTypeChange(type) {
+    setConfirmedEditWarningFingerprint("");
+    setEditFormNotice("");
     setEditForm(createEmptyForm(type));
   }
 
   function startEditingAsset(asset) {
     setEditingAssetId(asset.id);
     setEditForm(createFormFromAsset(asset));
+    setConfirmedEditWarningFingerprint("");
+    setEditFormNotice("");
     setIsAssetFormOpen(false);
   }
 
   function cancelEditing() {
     setEditingAssetId(null);
     setEditForm(createEmptyForm());
+    setConfirmedEditWarningFingerprint("");
+    setEditFormNotice("");
   }
 
   function handleSubmit(event) {
     event.preventDefault();
 
     try {
-      if (!confirmAssetValidation(form)) return;
+      if (addSubmitState.hasErrors) {
+        setAddFormNotice("請先修正需要修正的欄位。");
+        return;
+      }
+
+      if (addSubmitState.needsWarningConfirmation) {
+        setAddFormNotice("請先確認資料提醒後再新增。");
+        return;
+      }
+
       const asset = buildAssetFromForm(form);
       setAssets((current) => [asset, ...current]);
       resetForm(form.type);
@@ -877,7 +1045,16 @@ function App() {
     }
 
     try {
-      if (!confirmAssetValidation(editForm, editingAsset)) return;
+      if (editSubmitState.hasErrors) {
+        setEditFormNotice("請先修正需要修正的欄位。");
+        return;
+      }
+
+      if (editSubmitState.needsWarningConfirmation) {
+        setEditFormNotice("請先確認資料提醒後再儲存。");
+        return;
+      }
+
       const asset = buildAssetFromForm(editForm, editingAsset);
       setAssets((current) => current.map((item) => (item.id === editingAsset.id ? asset : item)));
       cancelEditing();
@@ -933,6 +1110,7 @@ function App() {
     setExpandedAssetGroups({});
     setIsAssetFormOpen(false);
     setCsvImportPreview(null);
+    setConfirmedCsvWarningFingerprint("");
     cancelEditing();
     cancelDeleteAsset();
     resetForm();
@@ -1013,6 +1191,7 @@ function App() {
       setExpandedAssetGroups({});
       setSelectedOverviewKey(null);
       setCsvImportPreview(null);
+      setConfirmedCsvWarningFingerprint("");
       cancelEditing();
       cancelDeleteAsset();
       resetAssetFilters();
@@ -1035,11 +1214,13 @@ function App() {
         financialGoals,
       });
       setCsvImportPreview(preview);
+      setConfirmedCsvWarningFingerprint("");
       setDataToolStatus(
         `CSV 解析完成：可匯入 ${preview.validCount} 筆，錯誤 ${preview.errorCount} 筆，提醒 ${preview.warningCount} 筆。`,
       );
     } catch (error) {
       setCsvImportPreview(null);
+      setConfirmedCsvWarningFingerprint("");
       setDataToolStatus(error.message || "CSV 匯入失敗：檔案格式不正確。");
     } finally {
       event.target.value = "";
@@ -1054,10 +1235,8 @@ function App() {
       return;
     }
 
-    if (
-      csvImportPreview.warningCount > 0 &&
-      !window.confirm(`CSV 仍有 ${csvImportPreview.warningCount} 筆 warning，請確認是否繼續匯入？`)
-    ) {
+    if (!csvImportState.canImport) {
+      setDataToolStatus("CSV 仍有 warning，請先在 preview 中確認後再匯入。");
       return;
     }
 
@@ -1069,10 +1248,17 @@ function App() {
     resetAssetFilters();
     setDataToolStatus(`CSV 匯入成功：新增 ${csvImportPreview.assets.length} 筆資產資料。`);
     setCsvImportPreview(null);
+    setConfirmedCsvWarningFingerprint("");
+  }
+
+  function confirmCsvWarnings() {
+    setConfirmedCsvWarningFingerprint(csvWarningFingerprint);
+    setDataToolStatus("已確認 CSV warning，可繼續匯入可匯入資料。");
   }
 
   function cancelCsvImport() {
     setCsvImportPreview(null);
+    setConfirmedCsvWarningFingerprint("");
     setDataToolStatus("已取消 CSV 匯入。");
   }
 
@@ -1100,13 +1286,13 @@ function App() {
           </p>
         </div>
         <button
-          className="style-switch-button"
+          className="style-switch-button icon-action-button"
           type="button"
           onClick={cycleStyleMode}
           aria-label={`切換風格，目前是${currentStyleMode.label}`}
           title={`切換風格，目前是${currentStyleMode.label}`}
         >
-          <span aria-hidden="true">{currentStyleMode.mark}</span>
+          <StyleModeMark mode={currentStyleMode.value} />
         </button>
       </header>
 
@@ -1127,14 +1313,16 @@ function App() {
 
           <div className="currency-breakdown">
             <button
-              className="currency-breakdown-toggle"
+              className="currency-breakdown-toggle disclosure-button card-button"
               type="button"
               aria-expanded={isCurrencyBreakdownOpen}
               onClick={() => setIsCurrencyBreakdownOpen((current) => !current)}
             >
               <span>幣別淨值</span>
               <small>{currencySummary.length === 0 ? "尚無資料" : `${currencySummary.length} 個幣別`}</small>
-              <span className="expand-indicator">{isCurrencyBreakdownOpen ? "⌃" : "⌄"}</span>
+              <span className="expand-indicator">
+                <ChevronIcon isOpen={isCurrencyBreakdownOpen} />
+              </span>
             </button>
 
             {isCurrencyBreakdownOpen && (
@@ -1168,7 +1356,20 @@ function App() {
           ) : (
             <ul className="attention-list">
               {attentionItems.map((item) => (
-                <li key={item.key}>{item.label}</li>
+                <li className={item.focusQuery ? "is-focusable" : ""} key={item.key}>
+                  {item.focusQuery ? (
+                    <button
+                      type="button"
+                      className="attention-action attention-button card-button"
+                      onClick={() => focusAttentionItem(item)}
+                    >
+                      <span>{item.label}</span>
+                      <small>點擊篩選明細</small>
+                    </button>
+                  ) : (
+                    item.label
+                  )}
+                </li>
               ))}
             </ul>
           )}
@@ -1191,7 +1392,7 @@ function App() {
                 onClick={updateLatestExchangeRates}
                 disabled={isFetchingRates}
               >
-                {isFetchingRates ? "…" : "↻"}
+                {isFetchingRates ? <LoadingIcon /> : <RefreshIcon />}
               </button>
             )}
             <button
@@ -1202,7 +1403,7 @@ function App() {
               aria-expanded={isExchangePanelOpen}
               onClick={() => setIsExchangePanelOpen((current) => !current)}
             >
-              {isExchangePanelOpen ? "⌃" : "⌄"}
+              <ChevronIcon isOpen={isExchangePanelOpen} />
             </button>
           </div>
         </div>
@@ -1250,7 +1451,7 @@ function App() {
                   </span>
 
                   <button
-                    className="small-action"
+                    className="small-action secondary-action"
                     type="button"
                     disabled={row.currency === "TWD"}
                     onClick={() => saveManualRate(row.currency)}
@@ -1272,14 +1473,16 @@ function App() {
       <section className="content-grid">
         <section className={`panel add-asset-panel${isAssetFormOpen ? " is-open" : ""}`}>
           <button
-            className="add-asset-toggle"
+            className="add-asset-toggle disclosure-button card-button"
             type="button"
             aria-expanded={isAssetFormOpen}
             onClick={() => setIsAssetFormOpen((current) => !current)}
           >
             <span>＋ 新增資產 / 負債</span>
             <small>{isAssetFormOpen ? "輸入完成後會自動收合" : `目前預設：${getAssetTypeLabel(form.type)}`}</small>
-            <span className="expand-indicator">{isAssetFormOpen ? "⌃" : "⌄"}</span>
+            <span className="expand-indicator">
+              <ChevronIcon isOpen={isAssetFormOpen} />
+            </span>
           </button>
 
           {isAssetFormOpen && (
@@ -1291,9 +1494,17 @@ function App() {
 
               <AssetFormFields form={form} onFieldChange={updateForm} onTypeChange={handleTypeChange} />
 
+              <ValidationSummary
+                validation={addFormValidation}
+                submitState={addSubmitState}
+                confirmed={isAddWarningConfirmed}
+                onConfirmWarnings={confirmAddWarnings}
+                notice={addFormNotice}
+              />
+
               <div className="form-actions">
-                <button className="primary-button" type="submit">
-                  新增
+                <button className="primary-button primary-action" type="submit" disabled={!addSubmitState.canSubmit}>
+                  {addSubmitState.needsWarningConfirmation ? "確認提醒後新增" : "新增"}
                 </button>
               </div>
             </form>
@@ -1346,7 +1557,9 @@ function App() {
 
                     return (
                       <button
-                        className={`allocation-summary-card${selectedOverviewGroup?.key === group.key ? " is-selected" : ""}${
+                        className={`allocation-summary-card card-button${
+                          selectedOverviewGroup?.key === group.key ? " is-selected" : ""
+                        }${
                           group.type === "loan" ? " is-liability" : ""
                         }`}
                         type="button"
@@ -1482,7 +1695,7 @@ function App() {
           </label>
 
           {isAssetFilterActive && (
-            <button className="small-action filter-reset-button" type="button" onClick={resetAssetFilters}>
+            <button className="small-action secondary-action filter-reset-button" type="button" onClick={resetAssetFilters}>
               重設
             </button>
           )}
@@ -1491,7 +1704,7 @@ function App() {
         <div className="type-filter" role="group" aria-label="資產類型篩選">
           {assetTypeFilters.map((item) => (
             <button
-              className={`type-filter-button${assetTypeFilter === item.value ? " is-active" : ""}`}
+              className={`type-filter-button filter-chip${assetTypeFilter === item.value ? " is-active" : ""}`}
               type="button"
               key={item.value}
               onClick={() => setAssetTypeFilter(item.value)}
@@ -1514,7 +1727,12 @@ function App() {
           ) : (
             sortedAssetGroups.map((group) => (
               <article className={`asset-group${group.type === "loan" ? " is-liability" : ""}`} key={group.key}>
-                <button className="asset-row asset-group-summary" type="button" onClick={() => toggleAssetGroup(group.key)}>
+                <button
+                  className="asset-row asset-group-summary card-button"
+                  type="button"
+                  aria-expanded={Boolean(expandedAssetGroups[group.key])}
+                  onClick={() => toggleAssetGroup(group.key)}
+                >
                   <span className="badge">{getAssetTypeLabel(group.type)}</span>
                   <div>
                     <strong className={getTextDensityClass(group.name)} title={group.name}>
@@ -1530,7 +1748,9 @@ function App() {
                     </strong>
                     <small>{group.secondaryText}</small>
                   </div>
-                  <span className="expand-indicator">{expandedAssetGroups[group.key] ? "⌃" : "⌄"}</span>
+                  <span className="expand-indicator">
+                    <ChevronIcon isOpen={Boolean(expandedAssetGroups[group.key])} />
+                  </span>
                 </button>
 
                 {expandedAssetGroups[group.key] && (
@@ -1568,6 +1788,12 @@ function App() {
                               loanSnapshot.progressPercent,
                             )}%`
                           : getAssetTypeLabel(asset.type);
+                      const detailBadges = getAssetValidationBadges({
+                        asset,
+                        assets,
+                        exchangeRates,
+                        financialGoals,
+                      });
 
                       return (
                         <article className={`detail-card${asset.type === "loan" ? " is-liability" : ""}`} key={asset.id}>
@@ -1575,6 +1801,15 @@ function App() {
                             <span>{detailDate}</span>
                             <span>{asset.currency}</span>
                           </div>
+                          {detailBadges.length > 0 && (
+                            <div className="detail-badge-list" aria-label="資料提醒">
+                              {detailBadges.map((badge) => (
+                                <span className={`detail-badge is-${badge.key}`} key={badge.key}>
+                                  {badge.label}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                           <strong title={detailAmount}>{compactDetailAmount}</strong>
                           <small className="updated-text">{formatUpdatedAt(getAssetUpdatedAt(asset))}</small>
                           <small>{detailMeta}</small>
@@ -1600,14 +1835,16 @@ function App() {
 
       <section className={`panel data-tools-panel${isDataToolsOpen ? " is-open" : ""}`} aria-label="理財目標與備份">
         <button
-          className="data-tools-toggle"
+          className="data-tools-toggle disclosure-button card-button"
           type="button"
           aria-expanded={isDataToolsOpen}
           onClick={() => setIsDataToolsOpen((current) => !current)}
         >
           <span>理財目標與備份</span>
           <small>設定提醒門檻、JSON 備份、CSV 匯入匯出</small>
-          <span className="expand-indicator">{isDataToolsOpen ? "⌃" : "⌄"}</span>
+          <span className="expand-indicator">
+            <ChevronIcon isOpen={isDataToolsOpen} />
+          </span>
         </button>
 
         {isDataToolsOpen && (
@@ -1674,10 +1911,10 @@ function App() {
             </div>
 
             <div className="backup-actions">
-              <button className="ghost-button" type="button" onClick={exportJsonData}>
+              <button className="ghost-button secondary-action" type="button" onClick={exportJsonData}>
                 匯出 JSON
               </button>
-              <button className="ghost-button" type="button" onClick={() => importFileInputRef.current?.click()}>
+              <button className="ghost-button secondary-action" type="button" onClick={() => importFileInputRef.current?.click()}>
                 匯入 JSON
               </button>
               <input
@@ -1687,13 +1924,13 @@ function App() {
                 accept="application/json,.json"
                 onChange={importJsonData}
               />
-              <button className="ghost-button" type="button" onClick={exportCsvData}>
+              <button className="ghost-button secondary-action" type="button" onClick={exportCsvData}>
                 匯出 CSV
               </button>
-              <button className="ghost-button" type="button" onClick={downloadCsvTemplate}>
+              <button className="ghost-button secondary-action" type="button" onClick={downloadCsvTemplate}>
                 下載 CSV 範本
               </button>
-              <button className="ghost-button" type="button" onClick={() => csvImportFileInputRef.current?.click()}>
+              <button className="ghost-button secondary-action" type="button" onClick={() => csvImportFileInputRef.current?.click()}>
                 匯入 CSV
               </button>
               <input
@@ -1716,8 +1953,8 @@ function App() {
                     <small>只支援 Asset Agent 標準 CSV，不支援銀行或券商原始檔。</small>
                   </div>
                   <span>
-                    可匯入 {csvImportPreview.validCount} 筆 · 錯誤 {csvImportPreview.errorCount} 筆 · 提醒{" "}
-                    {csvImportPreview.warningCount} 筆
+                    可匯入 {csvImportPreview.validCount} 筆 · 正常 {csvImportPreview.validRows?.length ?? 0} 筆 · 提醒{" "}
+                    {csvImportPreview.warningCount} 筆 · 錯誤 {csvImportPreview.errorCount} 筆
                   </span>
                 </div>
 
@@ -1736,7 +1973,10 @@ function App() {
 
                 {csvImportPreview.warnings.length > 0 && (
                   <div className="csv-warning-box">
-                    <strong>提醒列</strong>
+                    <div className="csv-box-header">
+                      <strong>提醒列</strong>
+                      {isCsvWarningConfirmed && <span>已確認</span>}
+                    </div>
                     <ul>
                       {csvImportPreview.warnings.map((warning) => (
                         <li key={`${warning.rowNumber}-${warning.message}`}>
@@ -1744,19 +1984,24 @@ function App() {
                         </li>
                       ))}
                     </ul>
+                    {csvImportState.needsWarningConfirmation && (
+                      <button className="warning-confirm-button secondary-action" type="button" onClick={confirmCsvWarnings}>
+                        我已確認 CSV warning
+                      </button>
+                    )}
                   </div>
                 )}
 
                 <div className="form-actions">
                   <button
-                    className="primary-button"
+                    className="primary-button primary-action"
                     type="button"
                     onClick={confirmCsvImport}
-                    disabled={csvImportPreview.assets.length === 0}
+                    disabled={!csvImportState.canImport}
                   >
-                    確認匯入
+                    {csvImportState.needsWarningConfirmation ? "確認 warning 後匯入" : "確認匯入"}
                   </button>
-                  <button className="ghost-button" type="button" onClick={cancelCsvImport}>
+                  <button className="ghost-button secondary-action" type="button" onClick={cancelCsvImport}>
                     取消匯入
                   </button>
                 </div>
@@ -1785,17 +2030,25 @@ function App() {
                 </p>
               </div>
               <button className="icon-button" type="button" aria-label="關閉編輯視窗" onClick={cancelEditing}>
-                ×
+                <CloseIcon />
               </button>
             </div>
 
             <AssetFormFields form={editForm} onFieldChange={updateEditForm} onTypeChange={handleEditTypeChange} />
 
+            <ValidationSummary
+              validation={editFormValidation}
+              submitState={editSubmitState}
+              confirmed={isEditWarningConfirmed}
+              onConfirmWarnings={confirmEditWarnings}
+              notice={editFormNotice}
+            />
+
             <div className="form-actions modal-actions">
-              <button className="primary-button" type="submit">
-                儲存修改
+              <button className="primary-button primary-action" type="submit" disabled={!editSubmitState.canSubmit}>
+                {editSubmitState.needsWarningConfirmation ? "確認提醒後儲存" : "儲存修改"}
               </button>
-              <button className="ghost-button" type="button" onClick={cancelEditing}>
+              <button className="ghost-button secondary-action" type="button" onClick={cancelEditing}>
                 取消
               </button>
             </div>
@@ -1817,7 +2070,7 @@ function App() {
                 <p className="muted">這筆資料刪除後無法復原。</p>
               </div>
               <button className="icon-button" type="button" aria-label="關閉刪除確認" onClick={cancelDeleteAsset}>
-                ×
+                <CloseIcon />
               </button>
             </div>
 
@@ -1832,10 +2085,10 @@ function App() {
             </div>
 
             <div className="form-actions modal-actions">
-              <button className="danger-button" type="button" onClick={confirmDeleteAsset}>
+              <button className="danger-button primary-action" type="button" onClick={confirmDeleteAsset}>
                 刪除
               </button>
-              <button className="ghost-button" type="button" onClick={cancelDeleteAsset}>
+              <button className="ghost-button secondary-action" type="button" onClick={cancelDeleteAsset}>
                 取消
               </button>
             </div>

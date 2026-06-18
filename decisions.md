@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-06-17：validation 採 inline UX，不以 window.confirm 作為主流程
+
+### 決策
+新增 / 編輯表單即時顯示 `validateAssetInput` 回傳的 error 與 warning。error 會讓主要送出按鈕 disabled；warning 不阻止資料寫入，但使用者必須先在表單內按下確認，送出才會啟用。
+CSV 匯入 preview 同樣在頁面內分區顯示正常列、提醒列與錯誤列；有 warning row 時，需先在 preview 內確認 warning，才允許匯入可匯入資料。
+資產明細以低飽和 badge 呈現幣別待確認、高集中與資料過期，待處理事項若能對應資產，點擊後會填入資產明細搜尋框。
+
+### 理由
+- `window.confirm` 會中斷使用者檢查表單內容，也不利於日後做更細緻的 agent 提醒與審閱流程
+- inline validation 可同時保留警示內容、表單上下文與明確的人工確認動作
+- 使用 fingerprint 綁定表單內容與 validation 結果，可避免使用者確認舊 warning 後修改欄位卻直接送出
+
+### 限制
+目前仍未加入 React component test 或瀏覽器 e2e test，v0.6 先以 pure helper 測試保護 submit gate、CSV import gate 與 badge 判斷。清空資料等破壞性流程仍保留 browser confirm / prompt 作為額外保護。
+
+---
+
 ## 2026-06-16：ETF 獨立類型與共用資料驗證
 
 ### 決策

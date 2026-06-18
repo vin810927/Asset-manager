@@ -32,7 +32,8 @@
 - 支援手動編輯匯率，方便在公開資料延遲或需要保守估值時覆寫
 - 支援本地資料可靠性提醒、理財目標設定與 JSON 匯入匯出備份
 - 支援 Asset Agent 標準 CSV 匯出、CSV 範本下載與匯入 preview
-- 支援新增表單與 CSV 匯入共用的資料驗證，error 會阻止寫入，warning 需人工確認
+- 支援新增表單與 CSV 匯入共用的資料驗證，error 會阻止寫入，warning 需在頁面內人工確認
+- 資產明細會以低飽和 badge 標示幣別待確認、高集中與資料過期
 - 新增貸款時需輸入：
   - 貸款名稱
   - 本金
@@ -185,7 +186,7 @@ ETF 資產與股票共用 ticker、shares、buyPrice、buyDate 等欄位，但 `
 
 JSON 是完整備份格式，包含資產明細、匯率、理財目標與最後檢查時間，適合在更換瀏覽器或重建 localStorage 前保存完整狀態。
 
-CSV 是人工整理與批次匯入格式，只處理 `assets`。使用者可以下載標準 CSV 範本，在 Excel 或 Google Sheets 編輯後匯入。匯入時會先顯示 preview，列出可匯入筆數與錯誤列，按確認後才加入目前資料。
+CSV 是人工整理與批次匯入格式，只處理 `assets`。使用者可以下載標準 CSV 範本，在 Excel 或 Google Sheets 編輯後匯入。匯入時會先顯示 preview，列出可匯入筆數、正常列、提醒列與錯誤列，按確認後才加入目前資料。
 
 CSV 欄位包含：
 
@@ -197,12 +198,14 @@ id,type,name,ticker,currency,amount,shares,buyPrice,marketPrice,marketPriceUpdat
 
 CSV 匯入 preview 會區分：
 
-- error：例如不合法 type、缺少 ticker、股數或購入價格不是有效數字。error row 不會進入 assets。
-- warning：例如數字代號使用 USD、英文代號使用 TWD、價格差異過大或集中度偏高。warning row 可匯入，但確認匯入前會再次提醒。
+- error：例如不合法 type、缺少 ticker、股數或購入價格不是有效數字。error row 不會進入 assets，也不能被匯入。
+- warning：例如數字代號使用 USD、英文代號使用 TWD、價格差異過大或集中度偏高。warning row 可匯入，但使用者需先在 preview 內確認 warning。
 
 ## 資料驗證規則
 
-新增表單與 CSV 匯入共用同一套驗證 helper：
+新增表單與 CSV 匯入共用同一套驗證 helper。error 代表資料無法可靠計算，會阻止新增、編輯或匯入；warning 代表資料可計算但需要人工確認，不再以 `window.confirm` 打斷流程，而是在表單或 CSV preview 內 inline 顯示。
+
+目前規則：
 
 - 股票 / ETF 的 ticker 不可空白
 - 股票 / ETF 的 shares 與 buyPrice 必須大於 0

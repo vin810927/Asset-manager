@@ -390,6 +390,13 @@ function createCsvIssue(rowNumber, messages) {
   return createCsvError(rowNumber, messages);
 }
 
+function createCsvRowPreview(rowNumber, messages, asset = null) {
+  return {
+    ...createCsvIssue(rowNumber, messages),
+    asset,
+  };
+}
+
 function finalizeCsvAsset(asset, errors, options) {
   if (errors.length > 0) {
     return { asset: null, errors, warnings: [] };
@@ -705,6 +712,9 @@ export function parseAssetsCsv(csvText, options = {}) {
       assets: [],
       errors: [createCsvError(0, [error.message || "CSV 格式錯誤。"])],
       warnings: [],
+      validRows: [],
+      warningRows: [],
+      errorRows: [createCsvRowPreview(0, [error.message || "CSV 格式錯誤。"])],
       totalRows: 0,
       validCount: 0,
       errorCount: 1,
@@ -717,6 +727,9 @@ export function parseAssetsCsv(csvText, options = {}) {
       assets: [],
       errors: [createCsvError(1, ["CSV 必須包含 header。"])],
       warnings: [],
+      validRows: [],
+      warningRows: [],
+      errorRows: [createCsvRowPreview(1, ["CSV 必須包含 header。"])],
       totalRows: 0,
       validCount: 0,
       errorCount: 1,
@@ -737,6 +750,9 @@ export function parseAssetsCsv(csvText, options = {}) {
       assets: [],
       errors: [createCsvError(1, headerErrors)],
       warnings: [],
+      validRows: [],
+      warningRows: [],
+      errorRows: [createCsvRowPreview(1, headerErrors)],
       totalRows,
       validCount: 0,
       errorCount: 1,
@@ -747,6 +763,9 @@ export function parseAssetsCsv(csvText, options = {}) {
   const assets = [];
   const errors = [];
   const warnings = [];
+  const validRows = [];
+  const warningRows = [];
+  const errorRows = [];
   const bodyRows = rows
     .slice(1)
     .map((row, index) => ({ row, rowNumber: index + 2 }))
@@ -763,11 +782,17 @@ export function parseAssetsCsv(csvText, options = {}) {
       assets: [...(options.assets ?? []), ...assets],
     });
     if (result.errors.length > 0) {
-      errors.push(createCsvError(rowNumber, result.errors));
+      const error = createCsvError(rowNumber, result.errors);
+      errors.push(error);
+      errorRows.push(createCsvRowPreview(rowNumber, result.errors));
     } else {
       assets.push(result.asset);
       if (result.warnings.length > 0) {
-        warnings.push(createCsvIssue(rowNumber, result.warnings));
+        const warning = createCsvIssue(rowNumber, result.warnings);
+        warnings.push(warning);
+        warningRows.push(createCsvRowPreview(rowNumber, result.warnings, result.asset));
+      } else {
+        validRows.push({ rowNumber, asset: result.asset });
       }
     }
   }
@@ -776,6 +801,9 @@ export function parseAssetsCsv(csvText, options = {}) {
     assets,
     errors,
     warnings,
+    validRows,
+    warningRows,
+    errorRows,
     totalRows: bodyRows.length,
     validCount: assets.length,
     errorCount: errors.length,
@@ -1122,6 +1150,71 @@ function createValidationIssue(code, message) {
   return { code, message };
 }
 
+function normalizeFingerprintValue(value) {
+  return value === undefined || value === null ? "" : String(value);
+}
+
+export function getAssetValidationFingerprint(asset, validation = { errors: [], warnings: [] }) {
+  const trackedAsset = {
+    type: normalizeFingerprintValue(asset?.type),
+    currency: normalizeFingerprintValue(asset?.currency),
+    name: normalizeFingerprintValue(asset?.name),
+    ticker: normalizeFingerprintValue(asset?.ticker).trim().toUpperCase(),
+    amount: normalizeFingerprintValue(asset?.amount),
+    shares: normalizeFingerprintValue(asset?.shares),
+    buyPrice: normalizeFingerprintValue(asset?.buyPrice),
+    marketPrice: normalizeFingerprintValue(asset?.marketPrice),
+    marketPriceUpdatedAt: normalizeFingerprintValue(asset?.marketPriceUpdatedAt),
+    buyDate: normalizeFingerprintValue(asset?.buyDate),
+    principal: normalizeFingerprintValue(asset?.principal),
+    years: normalizeFingerprintValue(asset?.years),
+    annualRate: normalizeFingerprintValue(asset?.annualRate),
+    startDate: normalizeFingerprintValue(asset?.startDate),
+    note: normalizeFingerprintValue(asset?.note),
+  };
+
+  return JSON.stringify({
+    asset: trackedAsset,
+    errors: (validation.errors ?? []).map((issue) => `${issue.code}:${issue.message}`),
+    warnings: (validation.warnings ?? []).map((issue) => `${issue.code}:${issue.message}`),
+  });
+}
+
+export function getAssetSubmitState(validation, isWarningConfirmed = false) {
+  const errors = validation?.errors ?? [];
+  const warnings = validation?.warnings ?? [];
+  const hasErrors = errors.length > 0;
+  const hasWarnings = warnings.length > 0;
+
+  return {
+    hasErrors,
+    hasWarnings,
+    needsWarningConfirmation: hasWarnings && !isWarningConfirmed,
+    canSubmit: !hasErrors && (!hasWarnings || isWarningConfirmed),
+  };
+}
+
+export function getCsvPreviewFingerprint(preview) {
+  return JSON.stringify(
+    (preview?.warningRows ?? preview?.warnings ?? []).map((item) => ({
+      rowNumber: item.rowNumber,
+      messages: item.messages ?? [item.message],
+    })),
+  );
+}
+
+export function getCsvImportState(preview, isWarningConfirmed = false) {
+  const importableCount = preview?.assets?.length ?? 0;
+  const warningCount = preview?.warningCount ?? 0;
+  const needsWarningConfirmation = warningCount > 0 && !isWarningConfirmed;
+
+  return {
+    hasImportableRows: importableCount > 0,
+    needsWarningConfirmation,
+    canImport: importableCount > 0 && !needsWarningConfirmation,
+  };
+}
+
 function getExistingAverageCostGapPercent(asset, assets = [], existingAssetId = null) {
   if (!isTradedAssetType(asset.type)) return null;
 
@@ -1355,6 +1448,61 @@ export function getConcentrationItems({ assets, exchangeRates, financialGoals })
     .sort((a, b) => (b.valueTwd ?? -1) - (a.valueTwd ?? -1));
 }
 
+export function isAssetStale(asset, financialGoals = DEFAULT_FINANCIAL_GOALS, now = new Date()) {
+  const goals = parseFinancialGoals(financialGoals);
+
+  if (isTradedAssetType(asset.type)) {
+    return (getDaysSince(asset.marketPriceUpdatedAt || getAssetUpdatedAt(asset), now) ?? 0) > STALE_STOCK_PRICE_DAYS;
+  }
+
+  if (asset.type === "cash" || asset.type === "loan" || asset.type === "fund" || asset.type === "other") {
+    return (getDaysSince(getAssetUpdatedAt(asset), now) ?? 0) > goals.staleAssetDays;
+  }
+
+  return false;
+}
+
+export function getAssetValidationBadges({
+  asset,
+  assets = [],
+  exchangeRates = null,
+  financialGoals = DEFAULT_FINANCIAL_GOALS,
+  now = new Date(),
+}) {
+  if (!asset) return [];
+
+  const badges = [];
+  const validation = validateAssetInput(asset, {
+    assets,
+    exchangeRates,
+    financialGoals,
+    existingAssetId: asset.id,
+  });
+
+  if (validation.warnings.some((issue) => issue.code === "ticker-currency")) {
+    badges.push({ key: "currency-warning", label: "幣別待確認" });
+  }
+
+  if (isTradedAssetType(asset.type)) {
+    const concentrationItem = getConcentrationItems({ assets, exchangeRates, financialGoals }).find(
+      (item) =>
+        item.type === asset.type &&
+        item.ticker === String(asset.ticker || "").trim().toUpperCase() &&
+        item.currency === (asset.currency || BASE_CURRENCY),
+    );
+
+    if (concentrationItem?.isWarning) {
+      badges.push({ key: "concentration", label: "高集中" });
+    }
+  }
+
+  if (isAssetStale(asset, financialGoals, now)) {
+    badges.push({ key: "stale", label: "資料過期" });
+  }
+
+  return badges;
+}
+
 export function getGoalMetrics({ assets, exchangeRates, financialGoals }) {
   const goals = parseFinancialGoals(financialGoals);
   const twdSummary = summarizeInBaseCurrency(summarizeByCurrency(assets), exchangeRates);
@@ -1419,6 +1567,7 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
     items.push({
       key: "stale-cash",
       label: `${staleCashAssets.length} 筆現金超過 ${goals.staleAssetDays} 天未更新，建議重新匯入或確認`,
+      focusQuery: getAssetDisplayName(staleCashAssets[0]),
     });
   }
 
@@ -1431,6 +1580,7 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
     items.push({
       key: "stale-stock-price",
       label: `${staleStockAssets.length} 筆股票 / ETF 超過 ${STALE_STOCK_PRICE_DAYS} 天未更新市價`,
+      focusQuery: getAssetDisplayName(staleStockAssets[0]),
     });
   }
 
@@ -1441,6 +1591,7 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
     items.push({
       key: "stale-loan",
       label: `${staleLoanAssets.length} 筆貸款超過 ${goals.staleAssetDays} 天未更新本金`,
+      focusQuery: getAssetDisplayName(staleLoanAssets[0]),
     });
   }
 
@@ -1453,6 +1604,7 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
     items.push({
       key: "stale-other-assets",
       label: `${staleOtherAssets.length} 筆基金 / 其他資產超過 ${goals.staleAssetDays} 天未更新`,
+      focusQuery: getAssetDisplayName(staleOtherAssets[0]),
     });
   }
 
@@ -1461,6 +1613,7 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
     items.push({
       key: "price-gap",
       label: `${priceGapAssets.length} 筆股票 / ETF 成本與目前市價差距超過 80%，請確認資料`,
+      focusQuery: getAssetDisplayName(priceGapAssets[0]),
     });
   }
 
@@ -1475,6 +1628,7 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
       .map((issue) => ({
         key: `validation-${asset.id}-${issue.code}`,
         label: `${getAssetDisplayName(asset)}：${issue.message}`,
+        focusQuery: getAssetDisplayName(asset),
       })),
   );
 
@@ -1495,6 +1649,7 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
       label: `${concentratedItems[0].ticker} 占總資產超過 ${formatNumber(
         goals.singleHoldingLimitPercent,
       )}%，建議人工檢視集中度`,
+      focusQuery: concentratedItems[0].ticker,
     });
   }
 

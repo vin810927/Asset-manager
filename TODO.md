@@ -3,8 +3,8 @@
 ## 近期優先
 
 - [ ] 改善 CSV preview 的欄位對照與錯誤定位
-- [ ] 補表單內 inline validation 提示，減少 alert / confirm 打斷感
 - [ ] 新增基金類型的專屬欄位
+- [ ] 補 asset validation 的 component / e2e 測試
 - [ ] 評估更高頻率或付費即時匯率來源
 
 ## 中期功能
@@ -63,3 +63,8 @@
 - [x] 將 ETF 獨立成資產類型
 - [x] 加入表單與 CSV 共用資料驗證 helper
 - [x] CSV 匯入 preview 區分 error 與 warning
+- [x] v0.6：加入表單 inline validation，移除 validation 主要流程的 window.confirm
+- [x] v0.6：CSV preview warning 改為頁面內確認後匯入
+- [x] v0.6：資產明細加入幣別待確認、高集中與資料過期 badge
+- [x] v0.6：待處理事項可點擊填入資產明細搜尋
+- [x] v0.6：補手機版 header、收合箭頭、集中度風險與分類卡 compact spacing
