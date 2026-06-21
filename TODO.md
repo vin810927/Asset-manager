@@ -68,3 +68,4 @@
 - [x] v0.6：資產明細加入幣別待確認、高集中與資料過期 badge
 - [x] v0.6：待處理事項可點擊填入資產明細搜尋
 - [x] v0.6：補手機版 header、收合箭頭、集中度風險與分類卡 compact spacing
+- [x] 支援 GitHub Pages 與 Cloudflare Pages 的 Vite base path 差異

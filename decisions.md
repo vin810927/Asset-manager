@@ -1,5 +1,21 @@
 # Decisions
 
+## 2026-06-21：部署 base path 依環境決定
+
+### 決策
+`vite.config.js` 不再固定使用 GitHub Pages 的 `/Asset-manager/`，改為優先讀取 `VITE_BASE`。若未設定 `VITE_BASE`，Cloudflare Pages 環境偵測到 `CF_PAGES` 時使用 `/`，其他 build 預設仍使用 `/Asset-manager/`。
+GitHub Actions workflow 明確設定 `VITE_BASE=/Asset-manager/`，Cloudflare Pages 建議設定 `VITE_BASE=/`，兩邊可用同一個 `npm run build`。
+
+### 理由
+- GitHub Pages 部署在 repo 子路徑，需要 `/Asset-manager/` 才能正確載入 assets
+- Cloudflare Pages 部署在根網域，需要 `/`，否則會把 JS / CSS 指到不存在的 `/Asset-manager/` 路徑
+- 以環境變數控制 base path 可以避免為兩個部署平台維護不同 build script
+
+### 限制
+若未來 Cloudflare Pages 改用自訂子路徑或 GitHub Pages repo 名稱變更，需同步調整部署環境的 `VITE_BASE`。
+
+---
+
 ## 2026-06-17：validation 採 inline UX，不以 window.confirm 作為主流程
 
 ### 決策

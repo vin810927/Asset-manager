@@ -76,6 +76,38 @@ npm test
 npm run preview
 ```
 
+## 部署與 Vite base path
+
+GitHub Pages 使用專案子路徑部署，正式網址是：
+
+```text
+https://vin810927.github.io/Asset-manager/
+```
+
+因此 GitHub Pages build 需使用：
+
+```bash
+VITE_BASE=/Asset-manager/ npm run build
+```
+
+目前 `.github/workflows/deploy.yml` 已明確設定 `VITE_BASE=/Asset-manager/`，避免 GitHub Pages 的 JS / CSS 路徑被改成根路徑。
+
+Cloudflare Pages 使用根網域部署，正式網址是：
+
+```text
+https://asset-manager-30u.pages.dev/
+```
+
+因此 Cloudflare Pages build 需使用 `/` 作為 base path。建議設定：
+
+```text
+Build command: npm run build
+Build output directory: dist
+Environment variable: VITE_BASE=/
+```
+
+若未設定 `VITE_BASE`，`vite.config.js` 也會在偵測到 Cloudflare Pages 的 `CF_PAGES` 環境變數時自動使用 `/`。
+
 ## 專案結構
 
 ```text
