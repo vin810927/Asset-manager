@@ -366,6 +366,32 @@ h2 {
   padding: 12px 4px 4px;
 }
 
+.data-source-status {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.data-source-status > div {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--row-border);
+  border-radius: 14px;
+  background: var(--row-bg);
+  padding: 10px 12px;
+}
+
+.data-source-status span,
+.data-source-status small {
+  color: var(--soft-text);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.data-source-status strong {
+  font-size: 0.95rem;
+}
+
 .goal-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
@@ -2229,6 +2255,14 @@ select:focus {
   .data-tools-toggle small {
     font-size: 0.76rem;
     line-height: 1.25;
+  }
+
+  .data-source-status {
+    grid-template-columns: 1fr;
+  }
+
+  .data-source-status > div {
+    padding: 9px 10px;
   }
 
   .expand-indicator {

@@ -2,6 +2,10 @@
 
 ## 近期優先
 
+- [ ] v0.8：完成 Cloudflare Access JWT 驗證
+- [ ] v0.8：建立 D1 resource、Pages binding 與 migration 套用流程
+- [ ] v0.8：實作 localStorage -> D1 初次匯入與同步開關
+- [ ] v0.8：設計雲端同步衝突處理與 rollback 策略
 - [ ] 改善 CSV preview 的欄位對照與錯誤定位
 - [ ] 新增基金類型的專屬欄位
 - [ ] 補 asset validation 的 component / e2e 測試
@@ -9,9 +13,9 @@
 
 ## 中期功能
 
-- [ ] 接 Supabase
-- [ ] 設計 database schema
-- [ ] 加入使用者登入
+- [ ] 啟用 Cloudflare D1 跨裝置同步
+- [ ] 建立 asset snapshots 與 weekly report 資料來源
+- [ ] 加入 Cloudflare Access 使用者 profile 管理
 - [ ] 加入多人共同管理
 - [ ] 接股票價格 API
 - [ ] 顯示股票損益
@@ -69,3 +73,6 @@
 - [x] v0.6：待處理事項可點擊填入資產明細搜尋
 - [x] v0.6：補手機版 header、收合箭頭、集中度風險與分類卡 compact spacing
 - [x] 支援 GitHub Pages 與 Cloudflare Pages 的 Vite base path 差異
+- [x] v0.7：建立 Cloudflare D1 schema 草案與 Pages Functions API skeleton
+- [x] v0.7：新增 local / cloud data layer foundation，預設仍使用 localStorage
+- [x] v0.7：UI 顯示目前資料來源與 Cloudflare D1 準備中狀態

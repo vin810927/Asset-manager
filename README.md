@@ -2,12 +2,13 @@
 
 個人資產管理與理財輔助工具 starter project。
 
-此專案目標是建立一個可逐步演進的資產管理 App，讓使用者能定期匯入資產數值，彙整現金、股票、基金、貸款與其他資產，未來可接上 Supabase、匯率、股價 API 與 AI 輔助分析。
+此專案目標是建立一個可逐步演進的資產管理 App，讓使用者能定期匯入資產數值，彙整現金、股票、基金、貸款與其他資產，未來可接上 Cloudflare D1 雲端同步、匯率、股價 API 與 AI 輔助分析。
 
 ## 目前功能
 
 - 使用 React + Vite 建立前端專案
-- 使用 `localStorage` 儲存資料，不需後端
+- 目前仍以 `localStorage` 作為主資料源，不需後端
+- v0.7 已加入 Cloudflare D1 雲端同步 foundation，但尚未啟用跨裝置同步
 - 支援資產類型：
   - 現金
   - 股票
@@ -42,6 +43,17 @@
   - 起始日期
   - 幣別
 - 頁面採精簡單頁設計，減少捲動需求
+
+## 資料來源狀態
+
+目前正式使用的 canonical data 仍是目前瀏覽器內的 `localStorage`，因此手機、電腦與不同瀏覽器之間仍會各自保存資料。
+
+Cloudflare Access 目前只保護 Cloudflare Pages 入口，不等於資料已同步到雲端。v0.7 只建立 D1 schema、Pages Functions API skeleton、Access identity helper stub 與前端 data layer，讓後續 v0.8 可以開始做實際 cloud sync。
+
+目前 UI 會明確顯示：
+
+- 目前資料來源：本機瀏覽器 `localStorage`
+- Cloudflare D1 雲端同步：準備中
 
 ## 技術棧
 
@@ -118,8 +130,17 @@ asset-agent/
   AGENTS.md
   package.json
   index.html
+  migrations/
+    0001_cloud_sync_foundation.sql
+  functions/
+    api/
+    _shared/
   src/
     App.jsx
+    data/
+      cloudStore.js
+      dataSource.js
+      localStore.js
     main.jsx
     styles.css
     utils.js
@@ -149,6 +170,17 @@ asset-agent/
   ...
 }
 ```
+
+目前 localStorage keys：
+
+```text
+asset-agent.assets.v1
+asset-agent.exchange-rates.v1
+asset-agent.financial-goals.v1
+asset-agent.style-mode.v1
+```
+
+JSON backup `schemaVersion` 目前為 `1`，內容包含 `schemaVersion`、`exportedAt`、`lastCheckedAt`、`assets`、`exchangeRates` 與 `financialGoals`。
 
 匯率資料另存在 `asset-agent.exchange-rates.v1`：
 
@@ -233,6 +265,64 @@ CSV 匯入 preview 會區分：
 - error：例如不合法 type、缺少 ticker、股數或購入價格不是有效數字。error row 不會進入 assets，也不能被匯入。
 - warning：例如數字代號使用 USD、英文代號使用 TWD、價格差異過大或集中度偏高。warning row 可匯入，但使用者需先在 preview 內確認 warning。
 
+## Cloudflare D1 foundation
+
+v0.7 新增 `migrations/0001_cloud_sync_foundation.sql`，作為未來雲端同步的 D1 schema 草案。
+
+localStorage 與 D1 的對應關係：
+
+| localStorage 資料 | D1 table | 說明 |
+| --- | --- | --- |
+| `assets[]` | `assets` | 逐筆資產資料，保留現有 cash / stock / ETF / fund / loan / other 欄位，並加入 `deleted_at` 供未來 soft delete / sync 使用 |
+| `exchangeRates` | `exchange_rates` | 目前匯率 store 以 `rates_json` 保存，保留 provider、fetched/source updated time |
+| `financialGoals` | `financial_goals` | 理財目標以 `goals_json` 保存，先避免頻繁 schema migration |
+| dashboard 衍生數字 | `asset_snapshots` | 未來 agent report / reminder 可使用每日 snapshot，不影響目前前端即時計算 |
+| Cloudflare Access identity | `profiles` | 以已驗證的 Access JWT subject / email 建立使用者 profile |
+
+Pages Functions API skeleton：
+
+```text
+GET    /api/health
+GET    /api/assets
+POST   /api/assets
+PUT    /api/assets/:id
+DELETE /api/assets/:id
+GET    /api/financial-goals
+PUT    /api/financial-goals
+GET    /api/exchange-rates
+PUT    /api/exchange-rates
+POST   /api/import-local-backup
+```
+
+Cloudflare Access identity 設計：
+
+- Worker / Pages Functions 必須從 Cloudflare Access JWT 取得身份，不可相信前端傳來的 email
+- v0.7 已新增 `getCurrentUserFromRequest(request)` 與 `requireAuthenticatedUser(request)` helper stub
+- v0.7 尚未完成 JWT 驗證，因此資料 API 會安全地回 401，不會假裝已完成雲端同步
+- v0.8 需設定 `ACCESS_TEAM_DOMAIN`、`ACCESS_AUD`，並用 Cloudflare Access JWKS 驗證 `Cf-Access-Jwt-Assertion`
+
+Cloudflare D1 建置草案：
+
+```bash
+npx wrangler d1 create asset-agent-prod
+npx wrangler d1 execute asset-agent-prod --file=./migrations/0001_cloud_sync_foundation.sql
+```
+
+Cloudflare Pages 需要在 Dashboard 或 wrangler 設定 D1 binding：
+
+```text
+Binding name: ASSET_AGENT_DB
+Database: asset-agent-prod
+```
+
+如果使用 Pages Functions 本機測試，需先完成 D1 resource 與 binding 設定，或用 wrangler 指定：
+
+```bash
+npx wrangler pages dev dist --d1 ASSET_AGENT_DB=<database-id>
+```
+
+以上步驟需要 Cloudflare dashboard / wrangler login，本專案不會在前端保存任何 D1 secret。
+
 ## 資料驗證規則
 
 新增表單與 CSV 匯入共用同一套驗證 helper。error 代表資料無法可靠計算，會阻止新增、編輯或匯入；warning 代表資料可計算但需要人工確認，不再以 `window.confirm` 打斷流程，而是在表單或 CSV preview 內 inline 顯示。
@@ -252,7 +342,8 @@ CSV 匯入 preview 會區分：
 
 後續可以逐步加入：
 
-- Supabase 後端
+- Cloudflare D1 雲端同步
+- Cloudflare Access JWT 驗證
 - 使用者登入
 - 匯率 API
 - 股票現價 API

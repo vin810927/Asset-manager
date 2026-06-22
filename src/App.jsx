@@ -30,20 +30,15 @@ import {
   groupNonStockAssets,
   groupTradedHoldings,
   isTradedAssetType,
-  loadAssets,
-  loadExchangeRates,
-  loadFinancialGoals,
   parseBackupPayload,
   parseAssetsCsv,
-  saveAssets,
-  saveExchangeRates,
-  saveFinancialGoals,
   setManualExchangeRate,
   summarizeByCurrency,
   summarizeInBaseCurrency,
   toNumber,
   validateAssetInput,
 } from "./utils.js";
+import { defaultDataSource } from "./data/dataSource.js";
 
 function getTodayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -605,10 +600,12 @@ function sortAssetEntries(entries, sortMode) {
   });
 }
 
+const appDataSource = defaultDataSource;
+
 function App() {
-  const [assets, setAssets] = useState(() => loadAssets());
-  const [exchangeRates, setExchangeRates] = useState(() => loadExchangeRates());
-  const [financialGoals, setFinancialGoals] = useState(() => loadFinancialGoals());
+  const [assets, setAssets] = useState(() => appDataSource.loadAssets());
+  const [exchangeRates, setExchangeRates] = useState(() => appDataSource.loadExchangeRates());
+  const [financialGoals, setFinancialGoals] = useState(() => appDataSource.loadFinancialGoals());
   const [exchangeRateDrafts, setExchangeRateDrafts] = useState({});
   const [exchangeRateStatus, setExchangeRateStatus] = useState("");
   const [isFetchingRates, setIsFetchingRates] = useState(false);
@@ -639,7 +636,7 @@ function App() {
   const [confirmedCsvWarningFingerprint, setConfirmedCsvWarningFingerprint] = useState("");
 
   useEffect(() => {
-    saveAssets(assets);
+    appDataSource.saveAssets(assets);
   }, [assets]);
 
   useEffect(() => {
@@ -648,11 +645,11 @@ function App() {
   }, [styleMode]);
 
   useEffect(() => {
-    saveExchangeRates(exchangeRates);
+    appDataSource.saveExchangeRates(exchangeRates);
   }, [exchangeRates]);
 
   useEffect(() => {
-    saveFinancialGoals(financialGoals);
+    appDataSource.saveFinancialGoals(financialGoals);
   }, [financialGoals]);
 
   const tradedHoldings = useMemo(() => groupTradedHoldings(assets), [assets]);
@@ -1841,7 +1838,7 @@ function App() {
           onClick={() => setIsDataToolsOpen((current) => !current)}
         >
           <span>理財目標與備份</span>
-          <small>設定提醒門檻、JSON 備份、CSV 匯入匯出</small>
+          <small>目前資料來源：{appDataSource.status.label}</small>
           <span className="expand-indicator">
             <ChevronIcon isOpen={isDataToolsOpen} />
           </span>
@@ -1849,6 +1846,19 @@ function App() {
 
         {isDataToolsOpen && (
           <div className="data-tools-body">
+            <div className="data-source-status" aria-label="目前資料來源">
+              <div>
+                <span>目前資料來源</span>
+                <strong>{appDataSource.status.label}</strong>
+                <small>{appDataSource.status.description}</small>
+              </div>
+              <div>
+                <span>Cloudflare D1 雲端同步</span>
+                <strong>準備中</strong>
+                <small>{appDataSource.cloudStatus.description}</small>
+              </div>
+            </div>
+
             <div className="goal-grid" aria-label="理財目標設定">
               <label>
                 每月生活費

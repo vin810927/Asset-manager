@@ -1,5 +1,23 @@
 # Decisions
 
+## 2026-06-23：v0.7 只建立 Cloudflare D1 同步基礎
+
+### 決策
+v0.7 新增 Cloudflare D1 migration、Pages Functions API skeleton、Cloudflare Access identity helper stub，以及 `src/data/` 下的 local / cloud / dataSource abstraction。
+前端 App 透過 `defaultDataSource` 讀寫資料，但預設仍固定使用 localStorage；Cloudflare D1 僅顯示為「準備中」，不讓使用者誤以為已跨裝置同步。
+資料 API 需要 `requireAuthenticatedUser`，但目前尚未完成 Access JWT 驗證，因此會安全地回 401；不接受前端傳來的 email 作為身份。
+
+### 理由
+- 手機與電腦要共用 canonical data，需要先穩定 D1 schema 與 API 邊界
+- 直接把 localStorage 移除或一次切到雲端，會讓既有 JSON / CSV 備份與本機資料風險過高
+- Cloudflare Access 只保護入口，不代表 API 已經有可靠 user identity；後端必須自行驗證 Access JWT
+- 先建立 data layer，可避免 React component 之後到處散落 localStorage 或 fetch 呼叫
+
+### 限制
+尚未建立 Cloudflare D1 resource、未綁定 `ASSET_AGENT_DB`、未套用 migration、未完成 JWT 驗證，也尚未把 UI 接到雲端 API。v0.8 需要補上 Access JWT 驗證、D1 binding、local backup 匯入 D1 與同步衝突策略。
+
+---
+
 ## 2026-06-21：部署 base path 依環境決定
 
 ### 決策
