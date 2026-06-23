@@ -2,10 +2,9 @@
 
 ## 近期優先
 
-- [ ] v0.8：完成 Cloudflare Access JWT 驗證
-- [ ] v0.8：加入 D1 binding health check
-- [ ] v0.8：實作 localStorage -> D1 初次匯入與同步開關
-- [ ] v0.8：設計雲端同步衝突處理與 rollback 策略
+- [ ] v0.9：實作 local backup 匯入 D1
+- [ ] v0.9：設計雲端同步衝突處理與 rollback 策略
+- [ ] v1.0：評估 cloud mode 作為主資料源
 - [ ] 改善 CSV preview 的欄位對照與錯誤定位
 - [ ] 新增基金類型的專屬欄位
 - [ ] 補 asset validation 的 component / e2e 測試
@@ -78,3 +77,5 @@
 - [x] v0.7：UI 顯示目前資料來源與 Cloudflare D1 準備中狀態
 - [x] v0.7.1：新增正式 Wrangler D1 設定與 migration 操作文件
 - [x] 建立 D1 database、Pages D1 binding 並套用 v0.7 foundation migration
+- [x] v0.8：完成 Cloudflare Access JWT 驗證
+- [x] v0.8：加入 D1 binding health check

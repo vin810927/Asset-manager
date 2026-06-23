@@ -8,7 +8,7 @@
 
 - 使用 React + Vite 建立前端專案
 - 目前仍以 `localStorage` 作為主資料源，不需後端
-- v0.7 已加入 Cloudflare D1 雲端同步 foundation，但尚未啟用跨裝置同步
+- v0.8 已加入 Cloudflare Access JWT 驗證與 D1 binding health check，但尚未啟用跨裝置同步
 - 支援資產類型：
   - 現金
   - 股票
@@ -124,6 +124,7 @@ Environment variable: VITE_BASE=/
 
 ```text
 asset-agent/
+  .env.example
   README.md
   TODO.md
   decisions.md
@@ -307,9 +308,11 @@ POST   /api/import-local-backup
 Cloudflare Access identity 設計：
 
 - Worker / Pages Functions 必須從 Cloudflare Access JWT 取得身份，不可相信前端傳來的 email
-- v0.7 已新增 `getCurrentUserFromRequest(request)` 與 `requireAuthenticatedUser(request)` helper stub
-- v0.7 尚未完成 JWT 驗證，因此資料 API 會安全地回 401，不會假裝已完成雲端同步
-- v0.8 需完成 Cloudflare Access JWT 驗證與 D1 binding health check，再開始設計實際同步流程
+- v0.8 已讓 `getCurrentUserFromRequest(request, env)` 與 `requireAuthenticatedUser(request, env)` 使用 Cloudflare Access JWKS 驗證 `Cf-Access-Jwt-Assertion` header 或 `CF_Authorization` cookie
+- v0.8 驗證 issuer、audience、signature、`exp` 與 `nbf`，並從已驗證 token 取得 `sub`、`email` 與 `name`
+- 若缺少 token、token 無效、audience 不符或 token 過期，資料 API 會回 401
+- 若 `ACCESS_TEAM_DOMAIN` 或 `ACCESS_AUD` 未設定，資料 API 會明確回報 Access 設定缺失，不會假裝成功
+- v0.8 仍不實作真正 cloud sync；assets、financial goals、exchange rates 與 local backup import API 在通過 auth 後仍回 501
 
 本機建議使用 `asset-agent-node` conda environment：
 
@@ -347,7 +350,41 @@ npx wrangler@latest d1 migrations apply ASSET_AGENT_DB --remote
 npx wrangler@latest d1 execute asset-agent-prod --remote --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
 ```
 
-`wrangler.jsonc` 只保存非 secret 設定，例如 app name、compatibility date、D1 binding name、database name、database id 與 migrations directory。本專案不會在前端保存任何 D1 secret，也尚未填入 `ACCESS_TEAM_DOMAIN` 或 `ACCESS_AUD`。
+Cloudflare Pages environment variables：
+
+```text
+ACCESS_TEAM_DOMAIN=https://<team-name>.cloudflareaccess.com
+ACCESS_AUD=<application-audience-aud-tag>
+```
+
+`ACCESS_TEAM_DOMAIN` 是 Cloudflare Access team domain，例如 `https://<team-name>.cloudflareaccess.com`。
+
+`ACCESS_AUD` 可在 Cloudflare Zero Trust 找到：
+
+```text
+Zero Trust -> Access controls -> Applications -> asset-agent -> Additional settings -> Application Audience (AUD) Tag
+```
+
+`.env.example` 只提供 placeholder，實際值需設定在 Cloudflare Pages dashboard，不要寫死在 repo。
+
+`wrangler.jsonc` 只保存非 secret 設定，例如 app name、compatibility date、D1 binding name、database name、database id 與 migrations directory。本專案不會在前端保存任何 D1 secret。
+
+`GET /api/health` 是 v0.8 的 health check endpoint，回傳格式包含：
+
+```json
+{
+  "ok": true,
+  "mode": "localStorage-primary-cloud-foundation",
+  "hasD1Binding": true,
+  "hasAccessConfig": true,
+  "d1Reachable": true,
+  "authenticated": true,
+  "userEmail": "user@example.com",
+  "timestamp": "2026-06-24T00:00:00.000Z"
+}
+```
+
+`/api/health` 可以公開回報 binding / config / D1 ping 狀態；若 request 具有有效 Cloudflare Access JWT，才會額外回傳已驗證的 `userEmail`。這個 endpoint 不會啟用同步，也不會讓前端主流程依賴雲端。
 
 ## 資料驗證規則
 
@@ -369,7 +406,8 @@ npx wrangler@latest d1 execute asset-agent-prod --remote --command "SELECT name 
 後續可以逐步加入：
 
 - Cloudflare D1 雲端同步
-- Cloudflare Access JWT 驗證
+- local backup 匯入 D1（v0.9 目標）
+- cloud mode 作為主資料源（v1.0 後再評估）
 - 使用者登入
 - 匯率 API
 - 股票現價 API

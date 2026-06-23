@@ -8,7 +8,7 @@ export async function onRequestPost({ request, env }) {
     requireD1Database(env);
     await readJsonBody(request);
 
-    throw createHttpError("Import local backup to D1 is intentionally not implemented until v0.8 sync.", 501);
+    throw createHttpError("Import local backup to D1 is intentionally not implemented until v0.9.", 501);
   } catch (error) {
     return errorResponse(error);
   }

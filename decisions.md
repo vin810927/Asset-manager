@@ -1,5 +1,23 @@
 # Decisions
 
+## 2026-06-24：v0.8 只做 Access JWT 驗證與 D1 health check
+
+### 決策
+`functions/_shared/access.js` 改為從 `Cf-Access-Jwt-Assertion` header 或 `CF_Authorization` cookie 讀取 Cloudflare Access JWT，使用 `ACCESS_TEAM_DOMAIN` 的 JWKS 驗證 RS256 signature，並檢查 issuer、audience、`exp` 與 `nbf`。
+`GET /api/health` 保持 public health check：回報 D1 binding、Access config、D1 ping 與 timestamp；若 request 帶有效 Access JWT，才額外回傳已驗證的 user identity。
+assets、financial goals、exchange rates 與 import-local-backup API 仍不實作 cloud sync；通過 auth 後回 501，避免 v0.8 被誤用為正式同步。
+前端 App 行為不變，`localStorage` 仍是預設且唯一啟用的 canonical data source。
+
+### 理由
+- Cloudflare Access 保護入口不等於 API 已有可信使用者身份；API 必須自行驗證 Access JWT
+- D1 binding health check 可先確認 Cloudflare runtime、binding 與 DB reachability，降低 v0.9 匯入資料時的環境風險
+- 在沒有衝突處理與 rollback 前，不應讓資料 API 讀寫 D1，否則會製造使用者誤以為已同步的風險
+
+### 限制
+需要在 Cloudflare Pages 設定 `ACCESS_TEAM_DOMAIN` 與 `ACCESS_AUD`。本輪不做 localStorage 匯入 D1、不切 cloud mode、不新增同步排程，也不把任何 secret 寫入 repo。
+
+---
+
 ## 2026-06-24：v0.7.1 補正式 Wrangler D1 設定
 
 ### 決策
