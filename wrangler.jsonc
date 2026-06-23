@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "asset-agent",
+  "compatibility_date": "2026-06-23",
+  "d1_databases": [
+    {
+      "binding": "ASSET_AGENT_DB",
+      "database_name": "asset-agent-prod",
+      "database_id": "8184ecb7-eafe-40e3-8a59-302eb74677a1",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

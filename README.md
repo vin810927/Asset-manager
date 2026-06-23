@@ -129,6 +129,7 @@ asset-agent/
   decisions.md
   AGENTS.md
   package.json
+  wrangler.jsonc
   index.html
   migrations/
     0001_cloud_sync_foundation.sql
@@ -267,7 +268,16 @@ CSV 匯入 preview 會區分：
 
 ## Cloudflare D1 foundation
 
-v0.7 新增 `migrations/0001_cloud_sync_foundation.sql`，作為未來雲端同步的 D1 schema 草案。
+v0.7 新增 `migrations/0001_cloud_sync_foundation.sql`，作為未來雲端同步的 D1 schema 草案。v0.7.1 補上正式 `wrangler.jsonc`，讓後續查詢與套用 D1 migration 不需要再使用一次性 Wrangler config。
+
+目前 D1 resource setup 已完成：
+
+- D1 database：`asset-agent-prod`
+- Pages binding：`ASSET_AGENT_DB`
+- 已套用 migration：`0001_cloud_sync_foundation.sql`
+- 已驗證 tables：`profiles`、`assets`、`exchange_rates`、`financial_goals`、`asset_snapshots`
+
+即使 D1 已建立，目前 App 仍是 localStorage mode。`localStorage` 仍是正式資料來源，D1 尚未承接跨裝置同步。
 
 localStorage 與 D1 的對應關係：
 
@@ -299,29 +309,45 @@ Cloudflare Access identity 設計：
 - Worker / Pages Functions 必須從 Cloudflare Access JWT 取得身份，不可相信前端傳來的 email
 - v0.7 已新增 `getCurrentUserFromRequest(request)` 與 `requireAuthenticatedUser(request)` helper stub
 - v0.7 尚未完成 JWT 驗證，因此資料 API 會安全地回 401，不會假裝已完成雲端同步
-- v0.8 需設定 `ACCESS_TEAM_DOMAIN`、`ACCESS_AUD`，並用 Cloudflare Access JWKS 驗證 `Cf-Access-Jwt-Assertion`
+- v0.8 需完成 Cloudflare Access JWT 驗證與 D1 binding health check，再開始設計實際同步流程
 
-Cloudflare D1 建置草案：
-
-```bash
-npx wrangler d1 create asset-agent-prod
-npx wrangler d1 execute asset-agent-prod --file=./migrations/0001_cloud_sync_foundation.sql
-```
-
-Cloudflare Pages 需要在 Dashboard 或 wrangler 設定 D1 binding：
-
-```text
-Binding name: ASSET_AGENT_DB
-Database: asset-agent-prod
-```
-
-如果使用 Pages Functions 本機測試，需先完成 D1 resource 與 binding 設定，或用 wrangler 指定：
+本機建議使用 `asset-agent-node` conda environment：
 
 ```bash
-npx wrangler pages dev dist --d1 ASSET_AGENT_DB=<database-id>
+conda activate asset-agent-node
 ```
 
-以上步驟需要 Cloudflare dashboard / wrangler login，本專案不會在前端保存任何 D1 secret。
+Wrangler 登入與帳號確認：
+
+```bash
+npx wrangler@latest whoami
+```
+
+確認 D1 database：
+
+```bash
+npx wrangler@latest d1 list
+```
+
+檢查 migration 狀態：
+
+```bash
+npx wrangler@latest d1 migrations list ASSET_AGENT_DB --remote
+```
+
+套用 future migration：
+
+```bash
+npx wrangler@latest d1 migrations apply ASSET_AGENT_DB --remote
+```
+
+查詢 remote D1 tables：
+
+```bash
+npx wrangler@latest d1 execute asset-agent-prod --remote --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
+```
+
+`wrangler.jsonc` 只保存非 secret 設定，例如 app name、compatibility date、D1 binding name、database name、database id 與 migrations directory。本專案不會在前端保存任何 D1 secret，也尚未填入 `ACCESS_TEAM_DOMAIN` 或 `ACCESS_AUD`。
 
 ## 資料驗證規則
 

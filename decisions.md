@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-06-24：v0.7.1 補正式 Wrangler D1 設定
+
+### 決策
+新增最小化 `wrangler.jsonc`，只保存非 secret 的 Cloudflare / D1 設定：app name、compatibility date、`ASSET_AGENT_DB` binding、`asset-agent-prod` database name、database id 與 `migrations` 目錄。
+文件補上 `conda activate asset-agent-node`、`npx wrangler@latest whoami`、D1 migration 狀態檢查與 future migration 套用流程。
+App 行為不變，`localStorage` 仍是預設且唯一啟用的 canonical data source；v0.8 才處理 Access JWT verification、D1 binding health check 與實際 cloud sync。
+
+### 理由
+- v0.7 D1 resource、Pages binding 與 first migration 已完成後，專案需要正式 Wrangler config，避免後續每次 migration 都依賴 `/private/tmp` 一次性 config workaround
+- `wrangler.jsonc` 不需要保存 secret，可安全納入 repo，並讓 D1 操作指令固定使用 `ASSET_AGENT_DB`
+- 先整理設定與文件，能降低 v0.8 接 Access JWT 與同步流程時的環境不確定性
+
+### 限制
+尚未填入 `ACCESS_TEAM_DOMAIN` 或 `ACCESS_AUD`，也未實作 Access JWT 驗證、D1 binding health check、localStorage 匯入 D1 或跨裝置同步。
+
+---
+
 ## 2026-06-23：v0.7 只建立 Cloudflare D1 同步基礎
 
 ### 決策
