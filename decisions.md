@@ -1,5 +1,23 @@
 # Decisions
 
+## 2026-06-25：v1.0 採 opt-in Cloud Mode，不做自動同步
+
+### 決策
+新增 opt-in Cloud Mode。預設資料源仍是本機瀏覽器 `localStorage`；只有使用者在「理財目標與備份」確認已有 D1 雲端副本、勾選備份與資料來源提醒並按下啟用後，才會把 `assetAgent.dataSourceMode` 設為 `cloud`。
+Cloud Mode 啟用後，assets 的新增、編輯與刪除透過 Cloudflare Pages Functions 寫入 D1；`GET /api/assets` 只回目前 verified Access user 的 active assets，`DELETE /api/assets/:id` 使用 soft delete。
+financialGoals 與 exchangeRates 在 v1.0 只從 D1 read-only 載入，雲端寫入延到 v1.1。`POST /api/import-local-backup` 保留 v0.9 手動 replace cloud copy 行為，不改成自動同步。
+
+### 理由
+- assets 是 dashboard 的核心資料，先讓使用者明確切換主資料源，可以驗證手機與電腦共用 D1 canonical assets
+- 不做同時寫 localStorage 與 D1，可避免雙寫失敗造成資料分歧
+- financialGoals / exchangeRates 若只依賴本機 localStorage，cloud mode 的 dashboard 會不完整；因此 v1.0 先支援 D1 read-only
+- 在尚未設計 conflict detection、offline queue 與 rollback 前，不應啟用背景同步或自動覆蓋
+
+### 限制
+v1.0 不做自動雙向同步、背景同步、offline queue、conflict resolution、agent report 或 AI 建議。Cloud 寫入失敗時，前端不更新 UI state，並顯示「資料未變更」。D1 資料不會自動覆蓋 localStorage；使用者可以切回本機模式查看原本的 localStorage 資料。
+
+---
+
 ## 2026-06-24：v0.9 只建立 D1 雲端副本，不啟用同步
 
 ### 決策

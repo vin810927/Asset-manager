@@ -116,6 +116,19 @@ function assetToParams(asset, userId, now, createId) {
   };
 }
 
+function profileUpsertStatement(db, verifiedUser, timestamp) {
+  return db
+    .prepare(
+      `INSERT INTO profiles (id, email, display_name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         email = excluded.email,
+         display_name = excluded.display_name,
+         updated_at = excluded.updated_at`,
+    )
+    .bind(verifiedUser.id, verifiedUser.email, verifiedUser.displayName, timestamp, timestamp);
+}
+
 function assetUpsertStatement(db, params) {
   return db
     .prepare(
@@ -170,6 +183,85 @@ function assetUpsertStatement(db, params) {
     );
 }
 
+function assetInsertStatement(db, params) {
+  return db
+    .prepare(
+      `INSERT INTO assets (
+        id, user_id, type, name, ticker, currency, amount, amount_value, shares,
+        buy_price, market_price, market_price_updated_at, buy_date, principal,
+        years, annual_rate, start_date, note, created_at, updated_at, deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+    )
+    .bind(
+      params.id,
+      params.userId,
+      params.type,
+      params.name,
+      params.ticker,
+      params.currency,
+      params.amount,
+      params.amountValue,
+      params.shares,
+      params.buyPrice,
+      params.marketPrice,
+      params.marketPriceUpdatedAt,
+      params.buyDate,
+      params.principal,
+      params.years,
+      params.annualRate,
+      params.startDate,
+      params.note,
+      params.createdAt,
+      params.updatedAt,
+    );
+}
+
+function assetUpdateStatement(db, params) {
+  return db
+    .prepare(
+      `UPDATE assets SET
+        type = ?,
+        name = ?,
+        ticker = ?,
+        currency = ?,
+        amount = ?,
+        amount_value = ?,
+        shares = ?,
+        buy_price = ?,
+        market_price = ?,
+        market_price_updated_at = ?,
+        buy_date = ?,
+        principal = ?,
+        years = ?,
+        annual_rate = ?,
+        start_date = ?,
+        note = ?,
+        updated_at = ?
+      WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+    )
+    .bind(
+      params.type,
+      params.name,
+      params.ticker,
+      params.currency,
+      params.amount,
+      params.amountValue,
+      params.shares,
+      params.buyPrice,
+      params.marketPrice,
+      params.marketPriceUpdatedAt,
+      params.buyDate,
+      params.principal,
+      params.years,
+      params.annualRate,
+      params.startDate,
+      params.note,
+      params.updatedAt,
+      params.id,
+      params.userId,
+    );
+}
+
 function financialGoalsInsertStatement(db, userId, financialGoals, now, createId) {
   return db
     .prepare("INSERT INTO financial_goals (id, user_id, goals_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
@@ -215,16 +307,7 @@ export async function importLocalBackupToCloudCopy({
   const backup = validateBackupPayload(payload);
   const timestamp = getNowIso(now);
   const statements = [
-    db
-      .prepare(
-        `INSERT INTO profiles (id, email, display_name, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           email = excluded.email,
-           display_name = excluded.display_name,
-           updated_at = excluded.updated_at`,
-      )
-      .bind(verifiedUser.id, verifiedUser.email, verifiedUser.displayName, timestamp, timestamp),
+    profileUpsertStatement(db, verifiedUser, timestamp),
     // Replace cloud copy strategy:
     // mark current user's cloud assets deleted, then upsert this backup's assets as the active copy.
     db
@@ -283,14 +366,157 @@ export function mapAssetRowToAsset(row) {
   };
 }
 
+function validateAssetBody(asset) {
+  if (!isPlainObject(asset)) {
+    throw createHttpError("Asset payload must be an object.", 400);
+  }
+
+  if (!ASSET_TYPES.has(asset.type)) {
+    throw createHttpError("Asset payload has unsupported type.", 400);
+  }
+
+  return asset;
+}
+
+async function getCloudAssetRowById(db, userId, id) {
+  return db
+    .prepare("SELECT * FROM assets WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1")
+    .bind(id, userId)
+    .first();
+}
+
 export async function getCloudCopyAssets(db, user) {
   const verifiedUser = assertVerifiedUser(user);
   const { results = [] } = await db
-    .prepare("SELECT * FROM assets WHERE user_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC")
+    .prepare(
+      "SELECT * FROM assets WHERE user_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC, created_at DESC, id ASC",
+    )
     .bind(verifiedUser.id)
     .all();
 
   return results.map(mapAssetRowToAsset);
+}
+
+export async function createCloudAsset({ db, user, asset, now = new Date(), createId = () => crypto.randomUUID() } = {}) {
+  if (!db) {
+    throw createHttpError("Cloudflare D1 binding ASSET_AGENT_DB is not configured.", 503);
+  }
+
+  const verifiedUser = assertVerifiedUser(user);
+  const assetPayload = validateAssetBody(asset);
+  const timestamp = getNowIso(now);
+  const params = assetToParams(
+    {
+      ...assetPayload,
+      id: normalizeOptionalText(assetPayload.id) || createId(),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    },
+    verifiedUser.id,
+    timestamp,
+    createId,
+  );
+
+  await db.batch([profileUpsertStatement(db, verifiedUser, timestamp), assetInsertStatement(db, params)]);
+
+  const row = await getCloudAssetRowById(db, verifiedUser.id, params.id);
+  return mapAssetRowToAsset(row);
+}
+
+export async function updateCloudAsset({ db, user, id, asset, now = new Date(), createId = () => crypto.randomUUID() } = {}) {
+  if (!db) {
+    throw createHttpError("Cloudflare D1 binding ASSET_AGENT_DB is not configured.", 503);
+  }
+
+  const verifiedUser = assertVerifiedUser(user);
+  const assetId = normalizeOptionalText(id);
+  const existingRow = assetId ? await getCloudAssetRowById(db, verifiedUser.id, assetId) : null;
+
+  if (!existingRow) {
+    throw createHttpError("Asset not found.", 404);
+  }
+
+  const assetPayload = validateAssetBody(asset);
+  const timestamp = getNowIso(now);
+  const params = assetToParams(
+    {
+      ...assetPayload,
+      id: assetId,
+      createdAt: existingRow.created_at,
+      updatedAt: timestamp,
+    },
+    verifiedUser.id,
+    timestamp,
+    createId,
+  );
+
+  await assetUpdateStatement(db, params).run();
+
+  const row = await getCloudAssetRowById(db, verifiedUser.id, assetId);
+  return mapAssetRowToAsset(row);
+}
+
+export async function deleteCloudAsset({ db, user, id, now = new Date() } = {}) {
+  if (!db) {
+    throw createHttpError("Cloudflare D1 binding ASSET_AGENT_DB is not configured.", 503);
+  }
+
+  const verifiedUser = assertVerifiedUser(user);
+  const assetId = normalizeOptionalText(id);
+  const existingRow = assetId ? await getCloudAssetRowById(db, verifiedUser.id, assetId) : null;
+
+  if (!existingRow) {
+    throw createHttpError("Asset not found.", 404);
+  }
+
+  const timestamp = getNowIso(now);
+  await db
+    .prepare("UPDATE assets SET deleted_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL")
+    .bind(timestamp, timestamp, assetId, verifiedUser.id)
+    .run();
+
+  return {
+    ok: true,
+    deleted: true,
+    id: assetId,
+    deletedAt: timestamp,
+  };
+}
+
+function parseJsonColumn(value, fallback = null) {
+  if (!value) return fallback;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw createHttpError("Stored cloud data is invalid.", 500);
+  }
+}
+
+export async function getCloudFinancialGoals(db, user) {
+  const verifiedUser = assertVerifiedUser(user);
+  const row = await db
+    .prepare("SELECT goals_json, updated_at FROM financial_goals WHERE user_id = ? LIMIT 1")
+    .bind(verifiedUser.id)
+    .first();
+
+  return {
+    financialGoals: parseJsonColumn(row?.goals_json, null),
+    updatedAt: row?.updated_at ?? null,
+  };
+}
+
+export async function getCloudExchangeRates(db, user) {
+  const verifiedUser = assertVerifiedUser(user);
+  const row = await db
+    .prepare("SELECT rates_json, updated_at FROM exchange_rates WHERE user_id = ? ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1")
+    .bind(verifiedUser.id)
+    .first();
+
+  return {
+    exchangeRates: parseJsonColumn(row?.rates_json, null),
+    updatedAt: row?.updated_at ?? null,
+  };
 }
 
 export async function getCloudCopyStatus(db, user) {

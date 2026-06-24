@@ -399,6 +399,46 @@ export function previewCloudBackupPayload(payload) {
   };
 }
 
+export function getCloudModeGateState({ cloudCopyStatus = null, acknowledged = false, isCloudMode = false } = {}) {
+  const assetCount = Number(cloudCopyStatus?.assetCount ?? 0);
+  const hasCloudStatusError = cloudCopyStatus?.state === "unavailable" || cloudCopyStatus?.state === "error";
+  const hasUsableCloudCopy = !hasCloudStatusError && Boolean(cloudCopyStatus?.hasCloudCopy) && assetCount > 0;
+
+  if (isCloudMode) {
+    return {
+      state: "enabled",
+      canEnable: false,
+      badge: "Cloud Mode：已啟用",
+      message: "目前資料來源：Cloudflare D1 雲端資料",
+    };
+  }
+
+  if (!hasUsableCloudCopy) {
+    return {
+      state: "missing-cloud-copy",
+      canEnable: false,
+      badge: "本機模式",
+      message: "請先上傳 JSON 建立 D1 雲端副本。",
+    };
+  }
+
+  if (!acknowledged) {
+    return {
+      state: "needs-confirmation",
+      canEnable: false,
+      badge: "本機模式",
+      message: "請先確認備份與資料來源提醒。",
+    };
+  }
+
+  return {
+    state: "ready",
+    canEnable: true,
+    badge: "本機模式",
+    message: "可啟用 Cloud Mode。",
+  };
+}
+
 function escapeCsvValue(value) {
   const text = value === undefined || value === null ? "" : String(value);
 

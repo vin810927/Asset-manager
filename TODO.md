@@ -2,8 +2,8 @@
 
 ## 近期優先
 
-- [ ] v0.9：設計雲端同步衝突處理與 rollback 策略
-- [ ] v1.0：評估 cloud mode 作為主資料源
+- [ ] v1.1：支援 financialGoals / exchangeRates cloud write
+- [ ] v1.2：設計雲端同步衝突偵測與 rollback 策略
 - [ ] 新增 cloud copy 與本機資料的人工比對 / 還原流程
 - [ ] 改善 CSV preview 的欄位對照與錯誤定位
 - [ ] 新增基金類型的專屬欄位
@@ -82,3 +82,6 @@
 - [x] v0.9：實作本機 JSON backup 匯入 D1 雲端副本
 - [x] v0.9：新增 read-only cloud copy assets 與 cloud-status endpoint
 - [x] v0.9：前端加入 D1 雲端副本 preview / 確認匯入 UI
+- [x] v1.0：加入 opt-in Cloud Mode，使用者確認後才以 D1 作為 assets 主資料源
+- [x] v1.0：實作 D1 assets CRUD，並維持 localStorage 為預設資料源
+- [x] v1.0：financialGoals / exchangeRates 在 Cloud Mode 下從 D1 read-only 載入

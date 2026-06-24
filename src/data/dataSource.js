@@ -5,15 +5,46 @@ export const DATA_SOURCE_MODES = {
   LOCAL: "local",
   CLOUD: "cloud",
 };
+export const DATA_SOURCE_MODE_STORAGE_KEY = "assetAgent.dataSourceMode";
 
 export const CLOUD_SYNC_STATUS = {
   mode: DATA_SOURCE_MODES.CLOUD,
   label: "Cloudflare D1 雲端同步",
-  description: "準備中；v0.7 尚未啟用跨裝置同步。",
+  description: "opt-in；啟用後以 D1 作為主資料源，但不做自動雙向同步。",
 };
 
+function getLocalStorage() {
+  return globalThis.window?.localStorage ?? globalThis.localStorage;
+}
+
+function normalizeDataSourceMode(mode) {
+  return mode === DATA_SOURCE_MODES.CLOUD ? DATA_SOURCE_MODES.CLOUD : DATA_SOURCE_MODES.LOCAL;
+}
+
+export function getStoredDataSourceMode() {
+  try {
+    const storage = getLocalStorage();
+    return normalizeDataSourceMode(storage?.getItem(DATA_SOURCE_MODE_STORAGE_KEY));
+  } catch {
+    return DATA_SOURCE_MODES.LOCAL;
+  }
+}
+
+export function setStoredDataSourceMode(mode) {
+  const nextMode = normalizeDataSourceMode(mode);
+
+  try {
+    const storage = getLocalStorage();
+    storage?.setItem(DATA_SOURCE_MODE_STORAGE_KEY, nextMode);
+  } catch {
+    // Ignore unavailable storage; the current in-memory state still drives this session.
+  }
+
+  return nextMode;
+}
+
 export function getDefaultDataSourceMode() {
-  return DATA_SOURCE_MODES.LOCAL;
+  return getStoredDataSourceMode();
 }
 
 export function createDataSource({
@@ -31,25 +62,46 @@ export function createDataSource({
     status: activeStore.status,
     cloudStatus: CLOUD_SYNC_STATUS,
     loadAssets() {
-      return localStore.loadAssets();
+      return activeStore.loadAssets ? activeStore.loadAssets() : activeStore.getAssets();
     },
     saveAssets(assets) {
+      if (activeMode === DATA_SOURCE_MODES.CLOUD) {
+        throw new Error("Cloud mode does not support bulk asset save.");
+      }
+
       return localStore.saveAssets(assets);
     },
+    createAsset(asset) {
+      return activeStore.createAsset(asset);
+    },
+    updateAsset(id, asset) {
+      return activeStore.updateAsset(id, asset);
+    },
+    deleteAsset(id) {
+      return activeStore.deleteAsset(id);
+    },
     loadExchangeRates() {
-      return localStore.loadExchangeRates();
+      return activeStore.loadExchangeRates ? activeStore.loadExchangeRates() : activeStore.getExchangeRates();
     },
     saveExchangeRates(exchangeRates) {
+      if (activeMode === DATA_SOURCE_MODES.CLOUD) {
+        throw new Error("Exchange rates are read-only in cloud mode v1.0.");
+      }
+
       return localStore.saveExchangeRates(exchangeRates);
     },
     loadFinancialGoals() {
-      return localStore.loadFinancialGoals();
+      return activeStore.loadFinancialGoals ? activeStore.loadFinancialGoals() : activeStore.getFinancialGoals();
     },
     saveFinancialGoals(financialGoals) {
+      if (activeMode === DATA_SOURCE_MODES.CLOUD) {
+        throw new Error("Financial goals are read-only in cloud mode v1.0.");
+      }
+
       return localStore.saveFinancialGoals(financialGoals);
     },
     loadSnapshot() {
-      return localStore.loadSnapshot();
+      return activeStore.loadSnapshot();
     },
   };
 }

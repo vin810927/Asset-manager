@@ -23,6 +23,7 @@ import {
   getCsvImportState,
   getCsvExportFileName,
   getCsvPreviewFingerprint,
+  getCloudModeGateState,
   getLatestUpdatedAt,
   getLoanSnapshot,
   getRateToTwd,
@@ -39,7 +40,7 @@ import {
   toNumber,
   validateAssetInput,
 } from "./utils.js";
-import { defaultDataSource } from "./data/dataSource.js";
+import { DATA_SOURCE_MODES, createDataSource, defaultDataSource, getDefaultDataSourceMode, setStoredDataSourceMode } from "./data/dataSource.js";
 
 function getTodayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -617,12 +618,15 @@ function sortAssetEntries(entries, sortMode) {
   });
 }
 
-const appDataSource = defaultDataSource;
+const initialDataSource = defaultDataSource;
 
 function App() {
-  const [assets, setAssets] = useState(() => appDataSource.loadAssets());
-  const [exchangeRates, setExchangeRates] = useState(() => appDataSource.loadExchangeRates());
-  const [financialGoals, setFinancialGoals] = useState(() => appDataSource.loadFinancialGoals());
+  const [dataSourceMode, setDataSourceMode] = useState(() => getDefaultDataSourceMode());
+  const appDataSource = useMemo(() => createDataSource({ mode: dataSourceMode }), [dataSourceMode]);
+  const isCloudMode = dataSourceMode === DATA_SOURCE_MODES.CLOUD;
+  const [assets, setAssets] = useState(() => initialDataSource.loadAssets());
+  const [exchangeRates, setExchangeRates] = useState(() => initialDataSource.loadExchangeRates());
+  const [financialGoals, setFinancialGoals] = useState(() => initialDataSource.loadFinancialGoals());
   const [exchangeRateDrafts, setExchangeRateDrafts] = useState({});
   const [exchangeRateStatus, setExchangeRateStatus] = useState("");
   const [isFetchingRates, setIsFetchingRates] = useState(false);
@@ -657,12 +661,22 @@ function App() {
     state: "ready",
     message: "可上傳 JSON 備份建立 D1 雲端副本；這不是同步。",
   });
+  const [cloudModeAcknowledged, setCloudModeAcknowledged] = useState(false);
+  const [cloudModeStatus, setCloudModeStatus] = useState({
+    state: "idle",
+    message: "",
+    lastLoadedAt: null,
+  });
   const [isCheckingCloudCopy, setIsCheckingCloudCopy] = useState(false);
   const [isImportingCloudBackup, setIsImportingCloudBackup] = useState(false);
+  const [isLoadingCloudData, setIsLoadingCloudData] = useState(false);
+  const [isSavingAsset, setIsSavingAsset] = useState(false);
 
   useEffect(() => {
-    appDataSource.saveAssets(assets);
-  }, [assets]);
+    if (!isCloudMode) {
+      appDataSource.saveAssets(assets);
+    }
+  }, [appDataSource, assets, isCloudMode]);
 
   useEffect(() => {
     document.documentElement.dataset.styleMode = styleMode;
@@ -670,12 +684,67 @@ function App() {
   }, [styleMode]);
 
   useEffect(() => {
-    appDataSource.saveExchangeRates(exchangeRates);
-  }, [exchangeRates]);
+    if (!isCloudMode) {
+      appDataSource.saveExchangeRates(exchangeRates);
+    }
+  }, [appDataSource, exchangeRates, isCloudMode]);
 
   useEffect(() => {
-    appDataSource.saveFinancialGoals(financialGoals);
-  }, [financialGoals]);
+    if (!isCloudMode) {
+      appDataSource.saveFinancialGoals(financialGoals);
+    }
+  }, [appDataSource, financialGoals, isCloudMode]);
+
+  useEffect(() => {
+    if (!isCloudMode) return undefined;
+
+    let isCancelled = false;
+
+    async function loadCloudData() {
+      setIsLoadingCloudData(true);
+      setCloudModeStatus((current) => ({
+        ...current,
+        state: "loading",
+        message: "正在從 Cloudflare D1 載入資料...",
+      }));
+
+      try {
+        const snapshot = await appDataSource.loadSnapshot();
+
+        if (isCancelled) return;
+
+        setAssets(snapshot.assets);
+        setExchangeRates(snapshot.exchangeRates);
+        setFinancialGoals(snapshot.financialGoals);
+        setExpandedAssetGroups({});
+        setSelectedOverviewKey(null);
+        resetAssetFilters();
+        cancelEditing();
+        cancelDeleteAsset();
+        setCloudModeStatus({
+          state: "ready",
+          message: "Cloud Mode 已啟用，資料由 Cloudflare D1 載入。",
+          lastLoadedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        if (isCancelled) return;
+
+        setCloudModeStatus({
+          state: "error",
+          message: error.message || "D1 資料載入失敗，可切回本機模式。",
+          lastLoadedAt: null,
+        });
+      } finally {
+        if (!isCancelled) setIsLoadingCloudData(false);
+      }
+    }
+
+    loadCloudData();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [appDataSource, isCloudMode]);
 
   const tradedHoldings = useMemo(() => groupTradedHoldings(assets), [assets]);
   const currencySummary = useMemo(() => summarizeByCurrency(assets), [assets]);
@@ -747,6 +816,17 @@ function App() {
     () => getCsvImportState(csvImportPreview, isCsvWarningConfirmed),
     [csvImportPreview, isCsvWarningConfirmed],
   );
+  const cloudModeGateState = useMemo(
+    () =>
+      getCloudModeGateState({
+        cloudCopyStatus,
+        acknowledged: cloudModeAcknowledged,
+        isCloudMode,
+      }),
+    [cloudCopyStatus, cloudModeAcknowledged, isCloudMode],
+  );
+  const hasUsableCloudCopy = cloudModeGateState.state !== "missing-cloud-copy";
+  const canEnableCloudMode = cloudModeGateState.canEnable && !isCheckingCloudCopy;
   const tradedDetailGroups = useMemo(
     () =>
       tradedHoldings.map((holding) => {
@@ -1034,7 +1114,7 @@ function App() {
     setEditFormNotice("");
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
 
     try {
@@ -1049,15 +1129,20 @@ function App() {
       }
 
       const asset = buildAssetFromForm(form);
-      setAssets((current) => [asset, ...current]);
+      setIsSavingAsset(true);
+      const savedAsset = await appDataSource.createAsset(asset);
+
+      setAssets((current) => [savedAsset, ...current]);
       resetForm(form.type);
       setIsAssetFormOpen(false);
     } catch (error) {
-      window.alert(error.message || "資產資料不完整。");
+      setAddFormNotice(error.message ? `儲存失敗，資料未變更：${error.message}` : "儲存失敗，資料未變更。");
+    } finally {
+      setIsSavingAsset(false);
     }
   }
 
-  function handleEditSubmit(event) {
+  async function handleEditSubmit(event) {
     event.preventDefault();
 
     if (!editingAsset) {
@@ -1078,10 +1163,15 @@ function App() {
       }
 
       const asset = buildAssetFromForm(editForm, editingAsset);
-      setAssets((current) => current.map((item) => (item.id === editingAsset.id ? asset : item)));
+      setIsSavingAsset(true);
+      const savedAsset = await appDataSource.updateAsset(editingAsset.id, asset);
+
+      setAssets((current) => current.map((item) => (item.id === editingAsset.id ? savedAsset : item)));
       cancelEditing();
     } catch (error) {
-      window.alert(error.message || "資產資料不完整。");
+      setEditFormNotice(error.message ? `儲存失敗，資料未變更：${error.message}` : "儲存失敗，資料未變更。");
+    } finally {
+      setIsSavingAsset(false);
     }
   }
 
@@ -1096,7 +1186,7 @@ function App() {
     setAssetToDeleteId(null);
   }
 
-  function confirmDeleteAsset() {
+  async function confirmDeleteAsset() {
     if (!assetToDelete) {
       cancelDeleteAsset();
       return;
@@ -1104,16 +1194,29 @@ function App() {
 
     const targetId = assetToDelete.id;
 
-    setAssets((current) => current.filter((asset) => asset.id !== targetId));
+    try {
+      setIsSavingAsset(true);
+      await appDataSource.deleteAsset(targetId);
+      setAssets((current) => current.filter((asset) => asset.id !== targetId));
 
-    if (editingAssetId === targetId) {
-      cancelEditing();
+      if (editingAssetId === targetId) {
+        cancelEditing();
+      }
+
+      cancelDeleteAsset();
+    } catch (error) {
+      setDataToolStatus(error.message ? `刪除失敗，資料未變更：${error.message}` : "刪除失敗，資料未變更。");
+    } finally {
+      setIsSavingAsset(false);
     }
-
-    cancelDeleteAsset();
   }
 
   function clearAll() {
+    if (isCloudMode) {
+      setDataToolStatus("Cloud Mode v1.0 不支援批次清空；請先切回本機模式或逐筆刪除。");
+      return;
+    }
+
     if (assets.length === 0) {
       window.alert("目前沒有資產資料可清空。");
       return;
@@ -1139,6 +1242,11 @@ function App() {
   }
 
   async function updateLatestExchangeRates() {
+    if (isCloudMode) {
+      setExchangeRateStatus("Cloud Mode v1.0 的匯率為 D1 read-only；請先切回本機模式再更新。");
+      return;
+    }
+
     setIsFetchingRates(true);
     setExchangeRateStatus("正在更新公開匯率...");
 
@@ -1162,6 +1270,11 @@ function App() {
   }
 
   function saveManualRate(currency) {
+    if (isCloudMode) {
+      setExchangeRateStatus("Cloud Mode v1.0 的匯率為 D1 read-only；請先切回本機模式再手動更新。");
+      return;
+    }
+
     const rate = toNumber(getExchangeRateDraft(currency));
     if (rate <= 0) return alert("請輸入大於 0 的匯率。");
 
@@ -1170,6 +1283,11 @@ function App() {
   }
 
   function updateFinancialGoal(field, value) {
+    if (isCloudMode) {
+      setDataToolStatus("Cloud Mode v1.0 的理財目標為 D1 read-only；v1.1 才會支援寫入。");
+      return;
+    }
+
     const numberValue = toNumber(value);
 
     setFinancialGoals((current) => ({
@@ -1205,6 +1323,10 @@ function App() {
     if (!file) return;
 
     try {
+      if (isCloudMode) {
+        throw new Error("Cloud Mode 下不匯入 JSON 到本機；請先切回本機模式，或使用雲端副本上傳流程。");
+      }
+
       const payload = parseBackupPayload(JSON.parse(await file.text()));
 
       setAssets(payload.assets);
@@ -1225,27 +1347,30 @@ function App() {
     }
   }
 
-  async function checkCloudCopyStatus() {
+  async function checkCloudCopyStatus({ quiet = false } = {}) {
     setIsCheckingCloudCopy(true);
-    setDataToolStatus("正在檢查 D1 雲端副本狀態...");
+    if (!quiet) setDataToolStatus("正在檢查 D1 雲端副本狀態...");
 
     try {
       const status = await appDataSource.cloudStore.getCloudStatus();
-
-      setCloudCopyStatus({
+      const nextStatus = {
         ...status,
         state: status.hasCloudCopy ? "created" : "ready",
         message: status.hasCloudCopy
           ? `雲端副本含 ${status.assetCount} 筆資產，最後更新 ${formatDateTime(status.lastCloudUpdate)}。`
           : "尚未建立雲端副本，可上傳 JSON 備份建立。",
-      });
-      setDataToolStatus(status.hasCloudCopy ? "已讀取 D1 雲端副本狀態。" : "目前尚未建立 D1 雲端副本。");
+      };
+
+      setCloudCopyStatus(nextStatus);
+      if (!quiet) setDataToolStatus(status.hasCloudCopy ? "已讀取 D1 雲端副本狀態。" : "目前尚未建立 D1 雲端副本。");
+      return nextStatus;
     } catch (error) {
       setCloudCopyStatus({
         state: "unavailable",
         message: error.message || "無法檢查 D1 雲端副本狀態。",
       });
       setDataToolStatus(error.message || "無法檢查 D1 雲端副本狀態。");
+      return null;
     } finally {
       setIsCheckingCloudCopy(false);
     }
@@ -1309,11 +1434,52 @@ function App() {
     }
   }
 
+  async function enableCloudMode() {
+    if (isCloudMode) return;
+
+    if (!cloudModeAcknowledged) {
+      setDataToolStatus("請先確認 Cloud Mode 的備份與資料來源提醒。");
+      return;
+    }
+
+    setDataToolStatus("正在確認 D1 雲端副本...");
+    const status = await checkCloudCopyStatus({ quiet: true });
+
+    if (!status?.hasCloudCopy || Number(status.assetCount ?? 0) <= 0) {
+      setDataToolStatus("尚未有可啟用的 D1 雲端副本；請先上傳 JSON 建立雲端副本。");
+      return;
+    }
+
+    const nextMode = setStoredDataSourceMode(DATA_SOURCE_MODES.CLOUD);
+    setDataSourceMode(nextMode);
+    setDataToolStatus("Cloud Mode 已啟用，正在載入 D1 資料。");
+  }
+
+  function switchToLocalMode() {
+    const nextMode = setStoredDataSourceMode(DATA_SOURCE_MODES.LOCAL);
+    const snapshot = initialDataSource.loadSnapshot();
+
+    setDataSourceMode(nextMode);
+    setAssets(snapshot.assets);
+    setExchangeRates(snapshot.exchangeRates);
+    setFinancialGoals(snapshot.financialGoals);
+    setCloudModeStatus({
+      state: "idle",
+      message: "已切回本機瀏覽器 localStorage。",
+      lastLoadedAt: null,
+    });
+    setDataToolStatus("已切回本機模式；D1 雲端資料不會自動同步回 localStorage。");
+  }
+
   async function importCsvData(event) {
     const file = event.target.files?.[0];
     if (!file) return;
 
     try {
+      if (isCloudMode) {
+        throw new Error("Cloud Mode v1.0 不支援 CSV 匯入；請先切回本機模式。");
+      }
+
       const preview = parseAssetsCsv(await file.text(), {
         assets,
         exchangeRates,
@@ -1335,6 +1501,11 @@ function App() {
 
   function confirmCsvImport() {
     if (!csvImportPreview) return;
+
+    if (isCloudMode) {
+      setDataToolStatus("Cloud Mode v1.0 不支援 CSV 匯入；資料未變更。");
+      return;
+    }
 
     if (csvImportPreview.assets.length === 0) {
       setDataToolStatus("CSV 沒有可匯入的有效資料。");
@@ -1496,7 +1667,7 @@ function App() {
                 aria-label="更新最新匯率"
                 title="更新最新匯率"
                 onClick={updateLatestExchangeRates}
-                disabled={isFetchingRates}
+                disabled={isFetchingRates || isCloudMode}
               >
                 {isFetchingRates ? <LoadingIcon /> : <RefreshIcon />}
               </button>
@@ -1540,7 +1711,7 @@ function App() {
                     type="number"
                     min="0"
                     step="0.000001"
-                    disabled={row.currency === "TWD"}
+                    disabled={row.currency === "TWD" || isCloudMode}
                     value={getExchangeRateDraft(row.currency)}
                     onChange={(event) => updateExchangeRateDraft(row.currency, event.target.value)}
                     aria-label={`${row.currency} 匯率`}
@@ -1559,7 +1730,7 @@ function App() {
                   <button
                     className="small-action secondary-action"
                     type="button"
-                    disabled={row.currency === "TWD"}
+                    disabled={row.currency === "TWD" || isCloudMode}
                     onClick={() => saveManualRate(row.currency)}
                   >
                     儲存
@@ -1570,7 +1741,9 @@ function App() {
 
             <p className="rate-status">
               {exchangeRateStatus ||
-                `目前來源：${exchangeRates.provider}。公開端點會抓取最新可用資料，必要時可手動覆寫。`}
+                (isCloudMode
+                  ? `目前來源：${exchangeRates.provider}。Cloud Mode v1.0 的匯率由 D1 read-only 載入。`
+                  : `目前來源：${exchangeRates.provider}。公開端點會抓取最新可用資料，必要時可手動覆寫。`)}
             </p>
           </div>
         )}
@@ -1609,8 +1782,8 @@ function App() {
               />
 
               <div className="form-actions">
-                <button className="primary-button primary-action" type="submit" disabled={!addSubmitState.canSubmit}>
-                  {addSubmitState.needsWarningConfirmation ? "確認提醒後新增" : "新增"}
+                <button className="primary-button primary-action" type="submit" disabled={!addSubmitState.canSubmit || isSavingAsset}>
+                  {isSavingAsset ? "儲存中" : addSubmitState.needsWarningConfirmation ? "確認提醒後新增" : "新增"}
                 </button>
               </div>
             </form>
@@ -1962,15 +2135,77 @@ function App() {
                 <small>{appDataSource.status.description}</small>
               </div>
               <div>
-                <span>Cloudflare D1 雲端同步</span>
-                <strong>準備中</strong>
-                <small>{appDataSource.cloudStatus.description}</small>
+                <span>Cloud Mode</span>
+                <strong>{isCloudMode ? "已啟用" : "未啟用"}</strong>
+                <small>
+                  {isCloudMode
+                    ? `最後成功讀取：${formatDateTime(cloudModeStatus.lastLoadedAt)}`
+                    : appDataSource.cloudStatus.description}
+                </small>
               </div>
               <div>
                 <span>Cloudflare D1 雲端副本</span>
                 <strong>{getCloudCopyLabel(cloudCopyStatus)}</strong>
                 <small>{getCloudCopyDescription(cloudCopyStatus)}</small>
               </div>
+            </div>
+
+            <div className={`cloud-mode-panel${isCloudMode ? " is-enabled" : ""}`} aria-label="Cloud Mode">
+              <div className="cloud-copy-header">
+                <div>
+                  <strong>{isCloudMode ? "Cloud Mode 已啟用" : "啟用 Cloud Mode"}</strong>
+                  <small>
+                    {isCloudMode
+                      ? "目前新增 / 編輯 / 刪除會寫入 Cloudflare D1；localStorage 不會自動雙向同步。"
+                      : "啟用前必須已有 D1 雲端副本，並建議先匯出 JSON 備份。"}
+                  </small>
+                </div>
+                {isCloudMode ? (
+                  <button className="ghost-button secondary-action" type="button" onClick={switchToLocalMode}>
+                    切回本機模式
+                  </button>
+                ) : (
+                  <button
+                    className="primary-button primary-action"
+                    type="button"
+                    onClick={enableCloudMode}
+                    disabled={!canEnableCloudMode}
+                  >
+                    啟用 Cloud Mode
+                  </button>
+                )}
+              </div>
+
+              {isCloudMode ? (
+                <div className={`cloud-mode-note is-${cloudModeStatus.state}`}>
+                  <strong>{cloudModeStatus.state === "error" ? "Cloud error" : "Cloudflare D1 雲端資料"}</strong>
+                  <small>{cloudModeStatus.message || "Cloud Mode 使用 D1 作為主資料源。"}</small>
+                  <small>financialGoals / exchangeRates 在 v1.0 為 D1 read-only，v1.1 才支援雲端寫入。</small>
+                  {isLoadingCloudData && <small>正在載入 D1 資料...</small>}
+                </div>
+              ) : (
+                <div className="cloud-mode-checklist">
+                  <div className="cloud-mode-confirmation">
+                    <label className="cloud-mode-confirm">
+                    <input
+                      type="checkbox"
+                      checked={cloudModeAcknowledged}
+                      onChange={(event) => setCloudModeAcknowledged(event.target.checked)}
+                    />
+                    <span>
+                      我已匯出或確認 JSON 備份，了解啟用後新增 / 編輯 / 刪除會寫入 D1，且 localStorage 不會自動同步。
+                    </span>
+                    </label>
+                  </div>
+                  <small>
+                    {hasUsableCloudCopy
+                      ? `可啟用：D1 雲端副本目前有 ${cloudCopyStatus.assetCount} 筆 assets，最後更新 ${formatDateTime(
+                          cloudCopyStatus.lastCloudUpdate,
+                        )}。`
+                      : "尚未確認可用 cloud copy；請先檢查或上傳 JSON 建立雲端副本。"}
+                  </small>
+                </div>
+              )}
             </div>
 
             <div className="cloud-copy-panel" aria-label="D1 雲端副本">
@@ -1994,6 +2229,7 @@ function App() {
                   className="ghost-button secondary-action"
                   type="button"
                   onClick={() => cloudBackupFileInputRef.current?.click()}
+                  disabled={isCloudMode}
                 >
                   上傳 JSON 建立雲端副本
                 </button>
@@ -2037,7 +2273,7 @@ function App() {
                       className="primary-button primary-action"
                       type="button"
                       onClick={confirmCloudBackupImport}
-                      disabled={isImportingCloudBackup}
+                      disabled={isImportingCloudBackup || isCloudMode}
                     >
                       {isImportingCloudBackup ? "建立中" : "確認建立雲端副本"}
                     </button>
@@ -2056,6 +2292,7 @@ function App() {
                   type="number"
                   min="0"
                   value={financialGoals.monthlyLivingExpense}
+                  disabled={isCloudMode}
                   onChange={(event) => updateFinancialGoal("monthlyLivingExpense", toNumber(event.target.value))}
                 />
               </label>
@@ -2066,6 +2303,7 @@ function App() {
                   min="0"
                   step="0.5"
                   value={financialGoals.emergencyMonths}
+                  disabled={isCloudMode}
                   onChange={(event) => updateFinancialGoal("emergencyMonths", toNumber(event.target.value))}
                 />
               </label>
@@ -2076,6 +2314,7 @@ function App() {
                   min="0"
                   step="0.1"
                   value={financialGoals.singleHoldingLimitPercent}
+                  disabled={isCloudMode}
                   onChange={(event) => updateFinancialGoal("singleHoldingLimitPercent", toNumber(event.target.value))}
                 />
               </label>
@@ -2086,6 +2325,7 @@ function App() {
                   min="0"
                   step="0.1"
                   value={financialGoals.stockExposureLimitPercent}
+                  disabled={isCloudMode}
                   onChange={(event) => updateFinancialGoal("stockExposureLimitPercent", toNumber(event.target.value))}
                 />
               </label>
@@ -2096,6 +2336,7 @@ function App() {
                   min="0"
                   step="0.1"
                   value={financialGoals.debtRatioLimitPercent}
+                  disabled={isCloudMode}
                   onChange={(event) => updateFinancialGoal("debtRatioLimitPercent", toNumber(event.target.value))}
                 />
               </label>
@@ -2105,16 +2346,28 @@ function App() {
                   type="number"
                   min="1"
                   value={financialGoals.staleAssetDays}
+                  disabled={isCloudMode}
                   onChange={(event) => updateFinancialGoal("staleAssetDays", toNumber(event.target.value))}
                 />
               </label>
             </div>
+            {isCloudMode && (
+              <p className="cloud-copy-note">
+                Cloud Mode v1.0 的理財目標與匯率由 D1 read-only 載入；若要修改，請先切回本機模式，v1.1
+                才會支援雲端寫入。
+              </p>
+            )}
 
             <div className="backup-actions">
               <button className="ghost-button secondary-action" type="button" onClick={exportJsonData}>
                 匯出 JSON 備份
               </button>
-              <button className="ghost-button secondary-action" type="button" onClick={() => importFileInputRef.current?.click()}>
+              <button
+                className="ghost-button secondary-action"
+                type="button"
+                onClick={() => importFileInputRef.current?.click()}
+                disabled={isCloudMode}
+              >
                 匯入 JSON 到本機
               </button>
               <input
@@ -2130,7 +2383,12 @@ function App() {
               <button className="ghost-button secondary-action" type="button" onClick={downloadCsvTemplate}>
                 下載 CSV 範本
               </button>
-              <button className="ghost-button secondary-action" type="button" onClick={() => csvImportFileInputRef.current?.click()}>
+              <button
+                className="ghost-button secondary-action"
+                type="button"
+                onClick={() => csvImportFileInputRef.current?.click()}
+                disabled={isCloudMode}
+              >
                 匯入 CSV
               </button>
               <input
@@ -2140,7 +2398,7 @@ function App() {
                 accept=".csv,text/csv"
                 onChange={importCsvData}
               />
-              <button className="subtle-danger-button" type="button" onClick={clearAll}>
+              <button className="subtle-danger-button" type="button" onClick={clearAll} disabled={isCloudMode}>
                 清空資料
               </button>
             </div>
@@ -2245,8 +2503,8 @@ function App() {
             />
 
             <div className="form-actions modal-actions">
-              <button className="primary-button primary-action" type="submit" disabled={!editSubmitState.canSubmit}>
-                {editSubmitState.needsWarningConfirmation ? "確認提醒後儲存" : "儲存修改"}
+              <button className="primary-button primary-action" type="submit" disabled={!editSubmitState.canSubmit || isSavingAsset}>
+                {isSavingAsset ? "儲存中" : editSubmitState.needsWarningConfirmation ? "確認提醒後儲存" : "儲存修改"}
               </button>
               <button className="ghost-button secondary-action" type="button" onClick={cancelEditing}>
                 取消
@@ -2285,8 +2543,8 @@ function App() {
             </div>
 
             <div className="form-actions modal-actions">
-              <button className="danger-button primary-action" type="button" onClick={confirmDeleteAsset}>
-                刪除
+              <button className="danger-button primary-action" type="button" onClick={confirmDeleteAsset} disabled={isSavingAsset}>
+                {isSavingAsset ? "刪除中" : "刪除"}
               </button>
               <button className="ghost-button secondary-action" type="button" onClick={cancelDeleteAsset}>
                 取消

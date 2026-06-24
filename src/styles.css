@@ -401,6 +401,20 @@ h2 {
   padding: 12px;
 }
 
+.cloud-mode-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--accent-soft) 58%, var(--panel-bg));
+  padding: 12px;
+}
+
+.cloud-mode-panel.is-enabled {
+  border-color: var(--row-border);
+  background: var(--row-bg);
+}
+
 .cloud-copy-header {
   display: flex;
   align-items: flex-start;
@@ -420,6 +434,85 @@ h2 {
   font-size: 0.8rem;
   font-weight: 800;
   line-height: 1.45;
+}
+
+.cloud-mode-note,
+.cloud-mode-checklist {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--row-border);
+  border-radius: 14px;
+  background: var(--panel-bg);
+  padding: 10px;
+}
+
+.cloud-mode-confirmation {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--row-border);
+  border-radius: 12px;
+  background: var(--row-bg);
+  padding: 10px;
+}
+
+.cloud-mode-note.is-error {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+.cloud-mode-note strong,
+.cloud-mode-note small,
+.cloud-mode-checklist small {
+  display: block;
+}
+
+.cloud-mode-note small,
+.cloud-mode-checklist small {
+  color: var(--soft-text);
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.cloud-mode-confirm {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--text);
+  font-size: 0.84rem;
+  font-weight: 800;
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.cloud-mode-confirm input {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  margin-top: 3px;
+  padding: 0;
+  border-radius: 4px;
+  accent-color: var(--accent);
+}
+
+.cloud-mode-confirm span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cloud-mode-panel .primary-button:disabled {
+  border: 1px solid var(--row-border);
+  background: var(--control-bg);
+  color: var(--soft-text);
+  cursor: not-allowed;
+  opacity: 0.58;
+  box-shadow: none;
 }
 
 .cloud-copy-preview {
@@ -2329,13 +2422,23 @@ select:focus {
     padding: 9px 10px;
   }
 
-  .cloud-copy-panel {
+  .cloud-copy-panel,
+  .cloud-mode-panel {
     padding: 10px;
   }
 
   .cloud-copy-header {
     display: grid;
     gap: 8px;
+  }
+
+  .cloud-mode-panel .primary-button,
+  .cloud-mode-panel .ghost-button {
+    width: 100%;
+  }
+
+  .cloud-mode-confirmation {
+    padding: 9px;
   }
 
   .cloud-copy-preview-grid {

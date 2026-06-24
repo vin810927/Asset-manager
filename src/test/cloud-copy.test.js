@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACCESS_JWT_HEADER } from "../../functions/_shared/access.js";
 import { getCloudCopyStatus } from "../../functions/_shared/cloud-copy.js";
-import { onRequestGet as onAssetsGet } from "../../functions/api/assets/index.js";
+import { onRequestDelete as onAssetDelete, onRequestPut as onAssetPut } from "../../functions/api/assets/[id].js";
+import { onRequestGet as onAssetsGet, onRequestPost as onAssetsPost } from "../../functions/api/assets/index.js";
 import { onRequestGet as onCloudStatusGet } from "../../functions/api/cloud-status.js";
+import { onRequestGet as onExchangeRatesGet } from "../../functions/api/exchange-rates.js";
+import { onRequestGet as onFinancialGoalsGet } from "../../functions/api/financial-goals.js";
 import { onRequestPost as onImportLocalBackupPost } from "../../functions/api/import-local-backup.js";
-import { previewCloudBackupPayload } from "../utils.js";
+import { getCloudModeGateState, previewCloudBackupPayload } from "../utils.js";
 import { assetsFixture, exchangeRatesFixture, financialGoalsFixture, FIXED_NOW } from "./fixtures.js";
 
 const ACCESS_ENV = {
@@ -61,8 +64,8 @@ async function createSignedAccessJwt(payloadOverrides = {}) {
   };
 }
 
-async function createAuthenticatedRequest(url, { method = "GET", body = null } = {}) {
-  const { token, jwks } = await createSignedAccessJwt();
+async function createAuthenticatedRequest(url, { method = "GET", body = null, payloadOverrides = {} } = {}) {
+  const { token, jwks } = await createSignedAccessJwt(payloadOverrides);
 
   vi.stubGlobal(
     "fetch",
@@ -121,7 +124,7 @@ function createFakeD1() {
       return { success: true };
     }
 
-    if (sql.startsWith("UPDATE assets SET deleted_at")) {
+    if (sql.startsWith("UPDATE assets SET deleted_at") && sql.includes("WHERE user_id = ?")) {
       const [deletedAt, updatedAt, userId] = values;
       for (const row of state.assets.values()) {
         if (row.user_id === userId && row.deleted_at === null) {
@@ -194,6 +197,64 @@ function createFakeD1() {
       return { success: true };
     }
 
+    if (sql.startsWith("UPDATE assets SET") && sql.includes("type = ?")) {
+      const [
+        type,
+        name,
+        ticker,
+        currency,
+        amount,
+        amountValue,
+        shares,
+        buyPrice,
+        marketPrice,
+        marketPriceUpdatedAt,
+        buyDate,
+        principal,
+        years,
+        annualRate,
+        startDate,
+        note,
+        updatedAt,
+        id,
+        userId,
+      ] = values;
+      const existing = state.assets.get(id);
+      if (existing?.user_id === userId && existing.deleted_at === null) {
+        state.assets.set(id, {
+          ...existing,
+          type,
+          name,
+          ticker,
+          currency,
+          amount,
+          amount_value: amountValue,
+          shares,
+          buy_price: buyPrice,
+          market_price: marketPrice,
+          market_price_updated_at: marketPriceUpdatedAt,
+          buy_date: buyDate,
+          principal,
+          years,
+          annual_rate: annualRate,
+          start_date: startDate,
+          note,
+          updated_at: updatedAt,
+        });
+      }
+      return { success: true };
+    }
+
+    if (sql.startsWith("UPDATE assets SET deleted_at = ?")) {
+      const [deletedAt, updatedAt, id, userId] = values;
+      const existing = state.assets.get(id);
+      if (existing?.user_id === userId && existing.deleted_at === null) {
+        existing.deleted_at = deletedAt;
+        existing.updated_at = updatedAt;
+      }
+      return { success: true };
+    }
+
     if (sql.startsWith("INSERT INTO financial_goals")) {
       const [id, userId, goalsJson, createdAt, updatedAt] = values;
       state.financialGoals.set(userId, {
@@ -258,6 +319,24 @@ function createFakeD1() {
     }
 
     if (sql.startsWith("SELECT updated_at FROM exchange_rates")) {
+      return (
+        state.exchangeRates
+          .filter((row) => row.user_id === values[0])
+          .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))[0] ?? null
+      );
+    }
+
+    if (sql.startsWith("SELECT * FROM assets WHERE id = ?")) {
+      const [id, userId] = values;
+      const row = state.assets.get(id);
+      return row?.user_id === userId && row.deleted_at === null ? row : null;
+    }
+
+    if (sql.startsWith("SELECT goals_json")) {
+      return state.financialGoals.get(values[0]) ?? null;
+    }
+
+    if (sql.startsWith("SELECT rates_json")) {
       return (
         state.exchangeRates
           .filter((row) => row.user_id === values[0])
@@ -520,6 +599,263 @@ describe("D1 cloud copy read-only assets and status", () => {
     );
   });
 
+  it("assets CRUD 未驗證 request 都會回 401", async () => {
+    const db = createFakeD1();
+    const env = {
+      ...ACCESS_ENV,
+      ASSET_AGENT_DB: db,
+    };
+
+    const createResponse = await onAssetsPost({
+      request: new Request("https://asset-agent.test/api/assets", {
+        method: "POST",
+        body: JSON.stringify(assetsFixture[0]),
+      }),
+      env,
+    });
+    const updateResponse = await onAssetPut({
+      request: new Request("https://asset-agent.test/api/assets/cash-twd-1", {
+        method: "PUT",
+        body: JSON.stringify(assetsFixture[0]),
+      }),
+      env,
+      params: { id: "cash-twd-1" },
+    });
+    const deleteResponse = await onAssetDelete({
+      request: new Request("https://asset-agent.test/api/assets/cash-twd-1", { method: "DELETE" }),
+      env,
+      params: { id: "cash-twd-1" },
+    });
+
+    expect(createResponse.status).toBe(401);
+    expect(updateResponse.status).toBe(401);
+    expect(deleteResponse.status).toBe(401);
+  });
+
+  it("POST /api/assets 建立 asset，且不信任 body.user_id", async () => {
+    const db = createFakeD1();
+    const response = await onAssetsPost({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/assets", {
+        method: "POST",
+        body: JSON.stringify({
+          ...assetsFixture[0],
+          id: "new-cloud-asset",
+          amount: 888,
+          user_id: "malicious-user",
+        }),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const payload = await jsonFromResponse(response);
+
+    expect(response.status).toBe(201);
+    expect(payload.asset).toEqual(
+      expect.objectContaining({
+        id: "new-cloud-asset",
+        amount: 888,
+        createdAt: expect.any(String),
+        updatedAt: expect.any(String),
+      }),
+    );
+    expect(db.state.assets.get("new-cloud-asset").user_id).toBe("verified-user-id");
+  });
+
+  it("PUT /api/assets/:id 只更新目前 user 的 active asset", async () => {
+    const db = createFakeD1();
+
+    await onAssetsPost({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/assets", {
+        method: "POST",
+        body: JSON.stringify({ ...assetsFixture[0], id: "editable-asset" }),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+
+    const response = await onAssetPut({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/assets/editable-asset", {
+        method: "PUT",
+        body: JSON.stringify({ ...assetsFixture[0], id: "ignored-id", amount: 777, user_id: "malicious-user" }),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+      params: { id: "editable-asset" },
+    });
+    const payload = await jsonFromResponse(response);
+
+    expect(response.status).toBe(200);
+    expect(payload.asset).toEqual(
+      expect.objectContaining({
+        id: "editable-asset",
+        amount: 777,
+      }),
+    );
+    expect(db.state.assets.get("editable-asset").user_id).toBe("verified-user-id");
+  });
+
+  it("user A 不能讀寫 user B 的 assets", async () => {
+    const db = createFakeD1();
+    db.state.assets.set("other-user-asset", {
+      id: "other-user-asset",
+      user_id: "other-user-id",
+      type: "cash",
+      name: "他人資料",
+      ticker: null,
+      currency: "TWD",
+      amount: 999,
+      amount_value: null,
+      shares: null,
+      buy_price: null,
+      market_price: null,
+      market_price_updated_at: null,
+      buy_date: null,
+      principal: null,
+      years: null,
+      annual_rate: null,
+      start_date: null,
+      note: "",
+      created_at: FIXED_NOW,
+      updated_at: FIXED_NOW,
+      deleted_at: null,
+    });
+
+    const getResponse = await onAssetsGet({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/assets"),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const putResponse = await onAssetPut({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/assets/other-user-asset", {
+        method: "PUT",
+        body: JSON.stringify({ ...assetsFixture[0], amount: 1 }),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+      params: { id: "other-user-asset" },
+    });
+    const deleteResponse = await onAssetDelete({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/assets/other-user-asset", {
+        method: "DELETE",
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+      params: { id: "other-user-asset" },
+    });
+    const getPayload = await jsonFromResponse(getResponse);
+
+    expect(getPayload.assets).toHaveLength(0);
+    expect(putResponse.status).toBe(404);
+    expect(deleteResponse.status).toBe(404);
+    expect(db.state.assets.get("other-user-asset").deleted_at).toBeNull();
+  });
+
+  it("DELETE /api/assets/:id 使用 soft delete，GET 不回 deleted assets", async () => {
+    const db = createFakeD1();
+
+    await onAssetsPost({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/assets", {
+        method: "POST",
+        body: JSON.stringify({ ...assetsFixture[0], id: "delete-me" }),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+
+    const deleteResponse = await onAssetDelete({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/assets/delete-me", {
+        method: "DELETE",
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+      params: { id: "delete-me" },
+    });
+    const getResponse = await onAssetsGet({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/assets"),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const getPayload = await jsonFromResponse(getResponse);
+
+    expect(deleteResponse.status).toBe(200);
+    expect(db.state.assets.get("delete-me").deleted_at).toEqual(expect.any(String));
+    expect(getPayload.assets.find((asset) => asset.id === "delete-me")).toBeUndefined();
+  });
+
+  it("GET financial-goals / exchange-rates 回目前 user 的 D1 read-only data", async () => {
+    const db = createFakeD1();
+    db.state.financialGoals.set("verified-user-id", {
+      id: "goals",
+      user_id: "verified-user-id",
+      goals_json: JSON.stringify(financialGoalsFixture),
+      created_at: FIXED_NOW,
+      updated_at: FIXED_NOW,
+    });
+    db.state.exchangeRates.push({
+      id: "rates-old",
+      user_id: "verified-user-id",
+      rates_json: JSON.stringify({ ...exchangeRatesFixture, fetchedAt: "2026-01-01T00:00:00.000Z" }),
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    });
+    db.state.exchangeRates.push({
+      id: "rates-new",
+      user_id: "verified-user-id",
+      rates_json: JSON.stringify(exchangeRatesFixture),
+      created_at: FIXED_NOW,
+      updated_at: FIXED_NOW,
+    });
+    db.state.financialGoals.set("other-user-id", {
+      id: "other-goals",
+      user_id: "other-user-id",
+      goals_json: JSON.stringify({ monthlyLivingExpense: 1 }),
+      created_at: FIXED_NOW,
+      updated_at: FIXED_NOW,
+    });
+
+    const goalsResponse = await onFinancialGoalsGet({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/financial-goals"),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const ratesResponse = await onExchangeRatesGet({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/exchange-rates"),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const goalsPayload = await jsonFromResponse(goalsResponse);
+    const ratesPayload = await jsonFromResponse(ratesResponse);
+
+    expect(goalsResponse.status).toBe(200);
+    expect(ratesResponse.status).toBe(200);
+    expect(goalsPayload.financialGoals).toEqual(financialGoalsFixture);
+    expect(goalsPayload.readOnly).toBe(true);
+    expect(ratesPayload.exchangeRates.fetchedAt).toBe(exchangeRatesFixture.fetchedAt);
+    expect(ratesPayload.readOnly).toBe(true);
+  });
+
   it("cloud status 無 cloud copy 時回 hasCloudCopy false", async () => {
     const db = createFakeD1();
     const status = await getCloudCopyStatus(db, {
@@ -595,5 +931,38 @@ describe("Cloud backup preview helper", () => {
     expect(() => previewCloudBackupPayload({ schemaVersion: 99, assets: [], financialGoals: null, exchangeRates: null })).toThrow(
       "schemaVersion",
     );
+  });
+
+  it("Cloud Mode gate 需要 cloud copy 與使用者確認，並能顯示已啟用 badge", () => {
+    expect(getCloudModeGateState({ cloudCopyStatus: null, acknowledged: true }).canEnable).toBe(false);
+    expect(
+      getCloudModeGateState({
+        cloudCopyStatus: { hasCloudCopy: true, assetCount: 2 },
+        acknowledged: false,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        state: "needs-confirmation",
+        canEnable: false,
+      }),
+    );
+    expect(
+      getCloudModeGateState({
+        cloudCopyStatus: { hasCloudCopy: true, assetCount: 2 },
+        acknowledged: true,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        state: "ready",
+        canEnable: true,
+      }),
+    );
+    expect(
+      getCloudModeGateState({
+        cloudCopyStatus: { state: "unavailable", hasCloudCopy: true, assetCount: 2 },
+        acknowledged: true,
+      }).canEnable,
+    ).toBe(false);
+    expect(getCloudModeGateState({ isCloudMode: true }).badge).toBe("Cloud Mode：已啟用");
   });
 });

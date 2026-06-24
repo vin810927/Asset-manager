@@ -1,9 +1,7 @@
 import { requireAuthenticatedUser } from "../../_shared/access.js";
-import { getCloudCopyAssets } from "../../_shared/cloud-copy.js";
+import { createCloudAsset, getCloudCopyAssets } from "../../_shared/cloud-copy.js";
 import { requireD1Database } from "../../_shared/db.js";
-import { createHttpError, errorResponse, jsonResponse, readJsonBody } from "../../_shared/http.js";
-
-const ASSETS_SYNC_NOT_IMPLEMENTED = "Cloud asset sync is not implemented yet. LocalStorage remains the primary data source.";
+import { errorResponse, jsonResponse, readJsonBody } from "../../_shared/http.js";
 
 export async function onRequestGet({ request, env }) {
   try {
@@ -19,9 +17,15 @@ export async function onRequestGet({ request, env }) {
 
 export async function onRequestPost({ request, env }) {
   try {
-    await requireAuthenticatedUser(request, env);
-    await readJsonBody(request);
-    throw createHttpError(ASSETS_SYNC_NOT_IMPLEMENTED, 501);
+    const user = await requireAuthenticatedUser(request, env);
+    const db = requireD1Database(env);
+    const asset = await createCloudAsset({
+      db,
+      user,
+      asset: await readJsonBody(request),
+    });
+
+    return jsonResponse({ ok: true, asset }, { status: 201 });
   } catch (error) {
     return errorResponse(error);
   }

@@ -23,6 +23,22 @@ export function createLocalStore() {
     saveExchangeRates,
     loadFinancialGoals,
     saveFinancialGoals,
+    async createAsset(asset) {
+      return asset;
+    },
+    async updateAsset(id, asset) {
+      return {
+        ...asset,
+        id,
+      };
+    },
+    async deleteAsset(id) {
+      return {
+        ok: true,
+        deleted: true,
+        id,
+      };
+    },
     loadSnapshot() {
       return {
         assets: loadAssets(),
