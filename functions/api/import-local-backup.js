@@ -1,14 +1,16 @@
 import { requireAuthenticatedUser } from "../_shared/access.js";
+import { importLocalBackupToCloudCopy } from "../_shared/cloud-copy.js";
 import { requireD1Database } from "../_shared/db.js";
-import { createHttpError, errorResponse, readJsonBody } from "../_shared/http.js";
+import { errorResponse, jsonResponse, readJsonBody } from "../_shared/http.js";
 
 export async function onRequestPost({ request, env }) {
   try {
-    await requireAuthenticatedUser(request, env);
-    requireD1Database(env);
-    await readJsonBody(request);
+    const user = await requireAuthenticatedUser(request, env);
+    const db = requireD1Database(env);
+    const payload = await readJsonBody(request);
+    const result = await importLocalBackupToCloudCopy({ db, user, payload });
 
-    throw createHttpError("Import local backup to D1 is intentionally not implemented until v0.9.", 501);
+    return jsonResponse(result);
   } catch (error) {
     return errorResponse(error);
   }

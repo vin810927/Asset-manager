@@ -32,6 +32,7 @@ import {
   isTradedAssetType,
   parseBackupPayload,
   parseAssetsCsv,
+  previewCloudBackupPayload,
   setManualExchangeRate,
   summarizeByCurrency,
   summarizeInBaseCurrency,
@@ -525,6 +526,22 @@ function getBackupFileName() {
   return `asset-agent-backup-${new Date().toISOString().slice(0, 10)}.json`;
 }
 
+function getCloudCopyLabel(status) {
+  if (status?.state === "ready") return "可建立";
+  if (status?.state === "created" || status?.hasCloudCopy) return "已建立";
+  if (status?.state === "unavailable") return "無法檢查";
+  return "可建立";
+}
+
+function getCloudCopyDescription(status) {
+  if (status?.message) return status.message;
+  if (status?.hasCloudCopy) {
+    return `雲端副本含 ${status.assetCount ?? 0} 筆資產，最後更新 ${formatDateTime(status.lastCloudUpdate)}。`;
+  }
+
+  return "可上傳 JSON 備份建立 D1 雲端副本；這不是同步。";
+}
+
 function downloadTextFile(content, fileName, mimeType) {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -632,8 +649,16 @@ function App() {
   const [selectedOverviewKey, setSelectedOverviewKey] = useState(null);
   const importFileInputRef = useRef(null);
   const csvImportFileInputRef = useRef(null);
+  const cloudBackupFileInputRef = useRef(null);
   const [csvImportPreview, setCsvImportPreview] = useState(null);
   const [confirmedCsvWarningFingerprint, setConfirmedCsvWarningFingerprint] = useState("");
+  const [cloudBackupPreview, setCloudBackupPreview] = useState(null);
+  const [cloudCopyStatus, setCloudCopyStatus] = useState({
+    state: "ready",
+    message: "可上傳 JSON 備份建立 D1 雲端副本；這不是同步。",
+  });
+  const [isCheckingCloudCopy, setIsCheckingCloudCopy] = useState(false);
+  const [isImportingCloudBackup, setIsImportingCloudBackup] = useState(false);
 
   useEffect(() => {
     appDataSource.saveAssets(assets);
@@ -1197,6 +1222,90 @@ function App() {
       setDataToolStatus(error.message || "匯入失敗：檔案格式不正確。");
     } finally {
       event.target.value = "";
+    }
+  }
+
+  async function checkCloudCopyStatus() {
+    setIsCheckingCloudCopy(true);
+    setDataToolStatus("正在檢查 D1 雲端副本狀態...");
+
+    try {
+      const status = await appDataSource.cloudStore.getCloudStatus();
+
+      setCloudCopyStatus({
+        ...status,
+        state: status.hasCloudCopy ? "created" : "ready",
+        message: status.hasCloudCopy
+          ? `雲端副本含 ${status.assetCount} 筆資產，最後更新 ${formatDateTime(status.lastCloudUpdate)}。`
+          : "尚未建立雲端副本，可上傳 JSON 備份建立。",
+      });
+      setDataToolStatus(status.hasCloudCopy ? "已讀取 D1 雲端副本狀態。" : "目前尚未建立 D1 雲端副本。");
+    } catch (error) {
+      setCloudCopyStatus({
+        state: "unavailable",
+        message: error.message || "無法檢查 D1 雲端副本狀態。",
+      });
+      setDataToolStatus(error.message || "無法檢查 D1 雲端副本狀態。");
+    } finally {
+      setIsCheckingCloudCopy(false);
+    }
+  }
+
+  async function previewCloudBackupFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const preview = previewCloudBackupPayload(JSON.parse(await file.text()));
+
+      setCloudBackupPreview(preview);
+      setDataToolStatus(
+        `雲端副本預覽完成：${preview.assetCount} 筆資產，理財目標 ${
+          preview.hasFinancialGoals ? "有" : "無"
+        }，匯率 ${preview.hasExchangeRates ? "有" : "無"}。`,
+      );
+    } catch (error) {
+      setCloudBackupPreview(null);
+      setDataToolStatus(error.message || "雲端副本預覽失敗：JSON 格式不正確。");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  function cancelCloudBackupPreview() {
+    setCloudBackupPreview(null);
+  }
+
+  async function confirmCloudBackupImport() {
+    if (!cloudBackupPreview) {
+      setDataToolStatus("請先選擇 JSON 備份檔。");
+      return;
+    }
+
+    setIsImportingCloudBackup(true);
+    setDataToolStatus("正在建立 D1 雲端副本...");
+
+    try {
+      const result = await appDataSource.cloudStore.importLocalBackup(cloudBackupPreview.payload);
+
+      setCloudBackupPreview(null);
+      setCloudCopyStatus({
+        ...result,
+        state: "created",
+        hasCloudCopy: true,
+        assetCount: result.imported?.assets ?? cloudBackupPreview.assetCount,
+        hasFinancialGoals: Boolean(result.imported?.financialGoals),
+        hasExchangeRates: Boolean(result.imported?.exchangeRates),
+        lastCloudUpdate: result.timestamp,
+        message: `已建立雲端副本：${result.imported?.assets ?? 0} 筆資產，時間 ${formatDateTime(result.timestamp)}。`,
+      });
+      setDataToolStatus(
+        `已建立雲端副本：${result.imported?.assets ?? 0} 筆資產。App 仍使用本機 localStorage。`,
+      );
+    } catch (error) {
+      setDataToolStatus(error.message || "建立 D1 雲端副本失敗。");
+    } finally {
+      setIsImportingCloudBackup(false);
     }
   }
 
@@ -1857,6 +1966,87 @@ function App() {
                 <strong>準備中</strong>
                 <small>{appDataSource.cloudStatus.description}</small>
               </div>
+              <div>
+                <span>Cloudflare D1 雲端副本</span>
+                <strong>{getCloudCopyLabel(cloudCopyStatus)}</strong>
+                <small>{getCloudCopyDescription(cloudCopyStatus)}</small>
+              </div>
+            </div>
+
+            <div className="cloud-copy-panel" aria-label="D1 雲端副本">
+              <div className="cloud-copy-header">
+                <div>
+                  <strong>D1 雲端副本</strong>
+                  <small>目前 app 仍使用本機資料；手機與電腦尚未自動同步，v1.0 才會評估 cloud mode。</small>
+                </div>
+                <button
+                  className="ghost-button secondary-action"
+                  type="button"
+                  onClick={checkCloudCopyStatus}
+                  disabled={isCheckingCloudCopy}
+                >
+                  {isCheckingCloudCopy ? "檢查中" : "檢查雲端副本"}
+                </button>
+              </div>
+
+              <div className="backup-actions">
+                <button
+                  className="ghost-button secondary-action"
+                  type="button"
+                  onClick={() => cloudBackupFileInputRef.current?.click()}
+                >
+                  上傳 JSON 建立雲端副本
+                </button>
+                <input
+                  ref={cloudBackupFileInputRef}
+                  className="visually-hidden"
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={previewCloudBackupFile}
+                />
+              </div>
+
+              {cloudBackupPreview && (
+                <div className="cloud-copy-preview" aria-live="polite">
+                  <div className="csv-preview-summary">
+                    <div>
+                      <strong>雲端副本預覽</strong>
+                      <small>這會 replace 目前 D1 雲端副本，不會改動本機 localStorage。</small>
+                    </div>
+                    <span>schema v{cloudBackupPreview.schemaVersion}</span>
+                  </div>
+                  <div className="cloud-copy-preview-grid">
+                    <div>
+                      <span>assets</span>
+                      <strong>{cloudBackupPreview.assetCount} 筆</strong>
+                    </div>
+                    <div>
+                      <span>financialGoals</span>
+                      <strong>{cloudBackupPreview.hasFinancialGoals ? "包含" : "未包含"}</strong>
+                    </div>
+                    <div>
+                      <span>exchangeRates</span>
+                      <strong>{cloudBackupPreview.hasExchangeRates ? "包含" : "未包含"}</strong>
+                    </div>
+                  </div>
+                  <p className="cloud-copy-note">
+                    目前資料來源仍是本機瀏覽器 localStorage；這次只建立 D1 備份副本，不代表手機與電腦已同步。
+                  </p>
+                  <div className="form-actions">
+                    <button
+                      className="primary-button primary-action"
+                      type="button"
+                      onClick={confirmCloudBackupImport}
+                      disabled={isImportingCloudBackup}
+                    >
+                      {isImportingCloudBackup ? "建立中" : "確認建立雲端副本"}
+                    </button>
+                    <button className="ghost-button secondary-action" type="button" onClick={cancelCloudBackupPreview}>
+                      取消
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="goal-grid" aria-label="理財目標設定">
@@ -1922,10 +2112,10 @@ function App() {
 
             <div className="backup-actions">
               <button className="ghost-button secondary-action" type="button" onClick={exportJsonData}>
-                匯出 JSON
+                匯出 JSON 備份
               </button>
               <button className="ghost-button secondary-action" type="button" onClick={() => importFileInputRef.current?.click()}>
-                匯入 JSON
+                匯入 JSON 到本機
               </button>
               <input
                 ref={importFileInputRef}

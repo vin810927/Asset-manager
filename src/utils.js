@@ -356,6 +356,49 @@ export function parseBackupPayload(payload) {
   };
 }
 
+function isBackupObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function previewCloudBackupPayload(payload) {
+  if (!isBackupObject(payload)) {
+    throw new Error("雲端副本預覽失敗：JSON 根節點必須是物件。");
+  }
+
+  const schemaVersion = toNumber(payload.schemaVersion);
+  if (schemaVersion !== BACKUP_SCHEMA_VERSION) {
+    throw new Error("雲端副本預覽失敗：目前只支援 schemaVersion 1。");
+  }
+
+  if (!Array.isArray(payload.assets)) {
+    throw new Error("雲端副本預覽失敗：找不到 assets 陣列。");
+  }
+
+  if (!Object.hasOwn(payload, "financialGoals")) {
+    throw new Error("雲端副本預覽失敗：找不到 financialGoals 欄位。");
+  }
+
+  if (payload.financialGoals !== null && !isBackupObject(payload.financialGoals)) {
+    throw new Error("雲端副本預覽失敗：financialGoals 必須是物件或 null。");
+  }
+
+  if (!Object.hasOwn(payload, "exchangeRates")) {
+    throw new Error("雲端副本預覽失敗：找不到 exchangeRates 欄位。");
+  }
+
+  if (payload.exchangeRates !== null && !isBackupObject(payload.exchangeRates)) {
+    throw new Error("雲端副本預覽失敗：exchangeRates 必須是物件或 null。");
+  }
+
+  return {
+    schemaVersion,
+    assetCount: payload.assets.length,
+    hasFinancialGoals: Boolean(payload.financialGoals),
+    hasExchangeRates: Boolean(payload.exchangeRates),
+    payload,
+  };
+}
+
 function escapeCsvValue(value) {
   const text = value === undefined || value === null ? "" : String(value);
 

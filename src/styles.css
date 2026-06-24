@@ -368,7 +368,7 @@ h2 {
 
 .data-source-status {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -390,6 +390,70 @@ h2 {
 
 .data-source-status strong {
   font-size: 0.95rem;
+}
+
+.cloud-copy-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--row-border);
+  border-radius: 16px;
+  background: var(--panel-bg);
+  padding: 12px;
+}
+
+.cloud-copy-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cloud-copy-header strong,
+.cloud-copy-header small {
+  display: block;
+}
+
+.cloud-copy-header small,
+.cloud-copy-note {
+  margin: 3px 0 0;
+  color: var(--soft-text);
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.cloud-copy-preview {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: 14px;
+  background: var(--accent-soft);
+  padding: 10px;
+}
+
+.cloud-copy-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cloud-copy-preview-grid > div {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--row-border);
+  border-radius: 12px;
+  background: var(--panel-bg);
+  padding: 8px 10px;
+}
+
+.cloud-copy-preview-grid span {
+  color: var(--soft-text);
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.cloud-copy-preview-grid strong {
+  font-size: 0.92rem;
 }
 
 .goal-grid {
@@ -2263,6 +2327,19 @@ select:focus {
 
   .data-source-status > div {
     padding: 9px 10px;
+  }
+
+  .cloud-copy-panel {
+    padding: 10px;
+  }
+
+  .cloud-copy-header {
+    display: grid;
+    gap: 8px;
+  }
+
+  .cloud-copy-preview-grid {
+    grid-template-columns: 1fr;
   }
 
   .expand-indicator {

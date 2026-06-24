@@ -2,9 +2,9 @@
 
 ## 近期優先
 
-- [ ] v0.9：實作 local backup 匯入 D1
 - [ ] v0.9：設計雲端同步衝突處理與 rollback 策略
 - [ ] v1.0：評估 cloud mode 作為主資料源
+- [ ] 新增 cloud copy 與本機資料的人工比對 / 還原流程
 - [ ] 改善 CSV preview 的欄位對照與錯誤定位
 - [ ] 新增基金類型的專屬欄位
 - [ ] 補 asset validation 的 component / e2e 測試
@@ -79,3 +79,6 @@
 - [x] 建立 D1 database、Pages D1 binding 並套用 v0.7 foundation migration
 - [x] v0.8：完成 Cloudflare Access JWT 驗證
 - [x] v0.8：加入 D1 binding health check
+- [x] v0.9：實作本機 JSON backup 匯入 D1 雲端副本
+- [x] v0.9：新增 read-only cloud copy assets 與 cloud-status endpoint
+- [x] v0.9：前端加入 D1 雲端副本 preview / 確認匯入 UI

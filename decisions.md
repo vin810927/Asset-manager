@@ -1,5 +1,26 @@
 # Decisions
 
+## 2026-06-24：v0.9 只建立 D1 雲端副本，不啟用同步
+
+### 決策
+新增 `POST /api/import-local-backup`，讓已通過 Cloudflare Access JWT 驗證的使用者把 Asset Agent JSON backup 匯入 D1，建立該使用者的 cloud copy。
+新增 read-only `GET /api/assets` 與 `GET /api/cloud-status`，只查目前 verified user 的 active cloud copy，不讓未驗證 request 讀取 D1。
+前端在「理財目標與備份」加入 D1 雲端副本區塊：JSON 檔先 preview，使用者確認後才上傳；文案明確標示目前 app 仍使用本機 localStorage，cloud copy 不是同步。
+
+### 理由
+- 先把最完整的本機資料建立成 D1 副本，可以驗證 D1 schema、Access identity 與資料 mapping，為後續 cloud mode 做準備
+- 不直接切 cloud mode，可避免手機 / 電腦資料來源突然改變，也避免尚未處理 conflict resolution 時產生資料覆蓋風險
+- read-only cloud copy endpoint 可以讓後續人工比對、匯入驗收與還原工具逐步建立
+
+### 匯入策略
+採 replace cloud copy 策略：同一 user 匯入前，先將既有 active assets soft delete，再將 JSON backup 的 assets upsert 成 active copy；financial goals 與 exchange rates 則刪除該 user 舊資料後重建。
+所有 D1 row 的 `user_id` 只來自已驗證 Access JWT 的 `sub` / stable user id，不信任前端 body 的 email 或 user_id。
+
+### 限制
+Cloud copy 不等於 sync；手機與電腦仍不會自動同步。v0.9 不做雙向同步、自動背景同步、衝突處理、agent report 或 AI 建議。v1.0 才會評估 cloud mode 作為主資料源。
+
+---
+
 ## 2026-06-24：v0.8 只做 Access JWT 驗證與 D1 health check
 
 ### 決策

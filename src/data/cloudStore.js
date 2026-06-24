@@ -49,6 +49,9 @@ export function createCloudStore({ apiBaseUrl = DEFAULT_API_BASE_URL, fetcher = 
     getHealth() {
       return request("/health");
     },
+    getCloudStatus() {
+      return request("/cloud-status");
+    },
     async getAssets() {
       const payload = await request("/assets");
       return payload.assets ?? [];

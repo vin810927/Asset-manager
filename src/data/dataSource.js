@@ -27,6 +27,7 @@ export function createDataSource({
   return {
     mode: activeMode,
     activeStore,
+    cloudStore,
     status: activeStore.status,
     cloudStatus: CLOUD_SYNC_STATUS,
     loadAssets() {

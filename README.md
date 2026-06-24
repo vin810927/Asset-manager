@@ -8,7 +8,7 @@
 
 - 使用 React + Vite 建立前端專案
 - 目前仍以 `localStorage` 作為主資料源，不需後端
-- v0.8 已加入 Cloudflare Access JWT 驗證與 D1 binding health check，但尚未啟用跨裝置同步
+- v0.9 已可把本機 JSON 備份匯入 Cloudflare D1 雲端副本，但尚未啟用跨裝置同步
 - 支援資產類型：
   - 現金
   - 股票
@@ -48,12 +48,13 @@
 
 目前正式使用的 canonical data 仍是目前瀏覽器內的 `localStorage`，因此手機、電腦與不同瀏覽器之間仍會各自保存資料。
 
-Cloudflare Access 目前只保護 Cloudflare Pages 入口，不等於資料已同步到雲端。v0.7 只建立 D1 schema、Pages Functions API skeleton、Access identity helper stub 與前端 data layer，讓後續 v0.8 可以開始做實際 cloud sync。
+Cloudflare Access 目前只保護 Cloudflare Pages 入口，不等於資料已同步到雲端。v0.9 可以把本機 JSON 備份建立成 D1 雲端副本，但前端 dashboard、資產新增 / 編輯 / 刪除與匯率操作仍全部使用 localStorage。
 
 目前 UI 會明確顯示：
 
 - 目前資料來源：本機瀏覽器 `localStorage`
 - Cloudflare D1 雲端同步：準備中
+- Cloudflare D1 雲端副本：可建立 / 已建立 / 無法檢查
 
 ## 技術棧
 
@@ -305,6 +306,20 @@ PUT    /api/exchange-rates
 POST   /api/import-local-backup
 ```
 
+v0.9 已實作：
+
+```text
+GET    /api/assets               read-only cloud copy，目前只供驗證 D1 副本
+GET    /api/cloud-status         回傳目前登入使用者是否已有雲端副本
+POST   /api/import-local-backup  將本機 JSON backup 建立為 D1 雲端副本
+```
+
+仍未實作：
+
+- POST / PUT / DELETE `/api/assets`
+- cloud mode 作為前端主資料源
+- localStorage 與 D1 的雙向同步、自動同步、衝突處理
+
 Cloudflare Access identity 設計：
 
 - Worker / Pages Functions 必須從 Cloudflare Access JWT 取得身份，不可相信前端傳來的 email
@@ -386,6 +401,25 @@ Zero Trust -> Access controls -> Applications -> asset-agent -> Additional setti
 
 `/api/health` 可以公開回報 binding / config / D1 ping 狀態；若 request 具有有效 Cloudflare Access JWT，才會額外回傳已驗證的 `userEmail`。這個 endpoint 不會啟用同步，也不會讓前端主流程依賴雲端。
 
+### D1 雲端副本匯入策略
+
+v0.9 的「上傳 JSON 建立雲端副本」只接受 Asset Agent JSON export，並要求 Cloudflare Access JWT 驗證通過。
+
+匯入流程：
+
+1. 前端選擇 JSON 檔後先 preview，顯示 `schemaVersion`、assets 筆數、是否包含 `financialGoals` 與 `exchangeRates`。
+2. 使用者確認後才呼叫 `POST /api/import-local-backup`。
+3. 後端只使用已驗證 Access JWT 的 `sub` / `email` 作為 user identity，不信任 body 裡的 `email`、`user_id` 或其他身份欄位。
+4. 後端會 upsert `profiles`，並將 assets、financial goals、exchange rates 寫入目前使用者的 cloud copy。
+5. 匯入採 replace cloud copy 策略：同一 user 既有 active assets 先 soft delete，再把這次 JSON backup 的 assets 寫成新的 active copy；同一 user 的 financial goals 與 exchange rates 會先刪除後重建。
+
+重要限制：
+
+- Cloud copy 不等於 sync。
+- app 目前仍使用本機瀏覽器 localStorage。
+- 手機與電腦不會自動同步。
+- v1.0 才會評估 cloud mode 作為主資料源。
+
 ## 資料驗證規則
 
 新增表單與 CSV 匯入共用同一套驗證 helper。error 代表資料無法可靠計算，會阻止新增、編輯或匯入；warning 代表資料可計算但需要人工確認，不再以 `window.confirm` 打斷流程，而是在表單或 CSV preview 內 inline 顯示。
@@ -406,7 +440,7 @@ Zero Trust -> Access controls -> Applications -> asset-agent -> Additional setti
 後續可以逐步加入：
 
 - Cloudflare D1 雲端同步
-- local backup 匯入 D1（v0.9 目標）
+- cloud copy 到 dashboard 的人工比對 / 還原工具
 - cloud mode 作為主資料源（v1.0 後再評估）
 - 使用者登入
 - 匯率 API
