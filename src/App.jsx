@@ -527,20 +527,27 @@ function getBackupFileName() {
   return `asset-agent-backup-${new Date().toISOString().slice(0, 10)}.json`;
 }
 
-function getCloudCopyLabel(status) {
-  if (status?.state === "ready") return "可建立";
+function getCloudCopyLabel(status, isCloudMode = false) {
+  if (isCloudMode) return "已啟用";
   if (status?.state === "created" || status?.hasCloudCopy) return "已建立";
   if (status?.state === "unavailable") return "無法檢查";
   return "可建立";
 }
 
-function getCloudCopyDescription(status) {
-  if (status?.message) return status.message;
-  if (status?.hasCloudCopy) {
-    return `雲端副本含 ${status.assetCount ?? 0} 筆資產，最後更新 ${formatDateTime(status.lastCloudUpdate)}。`;
+function getCloudCopyDescription(status, isCloudMode = false) {
+  if (isCloudMode) {
+    return "目前使用 Cloudflare D1 作為主資料源；localStorage 僅作為本機備份 / fallback。";
   }
 
-  return "可上傳 JSON 備份建立 D1 雲端副本；這不是同步。";
+  if (status?.state === "unavailable") {
+    return status?.message || "無法檢查 D1 雲端副本狀態。";
+  }
+
+  if (status?.state === "created" || status?.hasCloudCopy) {
+    return "雲端副本已存在，可在確認備份後手動啟用 Cloud Mode。";
+  }
+
+  return "可上傳 JSON 備份建立 D1 雲端副本，這不是同步。";
 }
 
 function downloadTextFile(content, fileName, mimeType) {
@@ -2157,8 +2164,8 @@ function App() {
               </div>
               <div>
                 <span>Cloudflare D1 雲端副本</span>
-                <strong>{getCloudCopyLabel(cloudCopyStatus)}</strong>
-                <small>{getCloudCopyDescription(cloudCopyStatus)}</small>
+                <strong>{getCloudCopyLabel(cloudCopyStatus, isCloudMode)}</strong>
+                <small>{getCloudCopyDescription(cloudCopyStatus, isCloudMode)}</small>
               </div>
             </div>
 
