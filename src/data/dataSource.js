@@ -21,6 +21,16 @@ function normalizeDataSourceMode(mode) {
   return mode === DATA_SOURCE_MODES.CLOUD ? DATA_SOURCE_MODES.CLOUD : DATA_SOURCE_MODES.LOCAL;
 }
 
+function normalizeAssetsForDataSource(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.assets)) return value.assets;
+  return [];
+}
+
+function resolveAssetsForDataSource(value) {
+  return typeof value?.then === "function" ? value.then(normalizeAssetsForDataSource) : normalizeAssetsForDataSource(value);
+}
+
 export function getStoredDataSourceMode() {
   try {
     const storage = getLocalStorage();
@@ -62,7 +72,7 @@ export function createDataSource({
     status: activeStore.status,
     cloudStatus: CLOUD_SYNC_STATUS,
     loadAssets() {
-      return activeStore.loadAssets ? activeStore.loadAssets() : activeStore.getAssets();
+      return resolveAssetsForDataSource(activeStore.loadAssets ? activeStore.loadAssets() : activeStore.getAssets());
     },
     saveAssets(assets) {
       if (activeMode === DATA_SOURCE_MODES.CLOUD) {

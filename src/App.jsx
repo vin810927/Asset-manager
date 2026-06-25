@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ASSET_TYPES,
   CURRENCIES,
@@ -40,7 +40,7 @@ import {
   toNumber,
   validateAssetInput,
 } from "./utils.js";
-import { DATA_SOURCE_MODES, createDataSource, defaultDataSource, getDefaultDataSourceMode, setStoredDataSourceMode } from "./data/dataSource.js";
+import { DATA_SOURCE_MODES, createDataSource, getDefaultDataSourceMode, setStoredDataSourceMode } from "./data/dataSource.js";
 
 function getTodayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -618,13 +618,25 @@ function sortAssetEntries(entries, sortMode) {
   });
 }
 
-const initialDataSource = defaultDataSource;
+const initialDataSource = createDataSource({ mode: DATA_SOURCE_MODES.LOCAL });
+
+function normalizeAppAssets(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.assets)) return value.assets;
+  return [];
+}
 
 function App() {
   const [dataSourceMode, setDataSourceMode] = useState(() => getDefaultDataSourceMode());
   const appDataSource = useMemo(() => createDataSource({ mode: dataSourceMode }), [dataSourceMode]);
   const isCloudMode = dataSourceMode === DATA_SOURCE_MODES.CLOUD;
-  const [assets, setAssets] = useState(() => initialDataSource.loadAssets());
+  const [assetState, setAssetState] = useState(() => normalizeAppAssets(initialDataSource.loadAssets()));
+  const assets = useMemo(() => normalizeAppAssets(assetState), [assetState]);
+  const setAssets = useCallback((nextAssets) => {
+    setAssetState((currentAssets) =>
+      normalizeAppAssets(typeof nextAssets === "function" ? nextAssets(normalizeAppAssets(currentAssets)) : nextAssets),
+    );
+  }, []);
   const [exchangeRates, setExchangeRates] = useState(() => initialDataSource.loadExchangeRates());
   const [financialGoals, setFinancialGoals] = useState(() => initialDataSource.loadFinancialGoals());
   const [exchangeRateDrafts, setExchangeRateDrafts] = useState({});
@@ -731,7 +743,7 @@ function App() {
 
         setCloudModeStatus({
           state: "error",
-          message: error.message || "D1 資料載入失敗，可切回本機模式。",
+          message: error.message || "Cloud Mode 載入失敗，可切回本機模式。",
           lastLoadedAt: null,
         });
       } finally {
@@ -744,7 +756,7 @@ function App() {
     return () => {
       isCancelled = true;
     };
-  }, [appDataSource, isCloudMode]);
+  }, [appDataSource, isCloudMode, setAssets]);
 
   const tradedHoldings = useMemo(() => groupTradedHoldings(assets), [assets]);
   const currencySummary = useMemo(() => summarizeByCurrency(assets), [assets]);
@@ -2212,7 +2224,11 @@ function App() {
               <div className="cloud-copy-header">
                 <div>
                   <strong>D1 雲端副本</strong>
-                  <small>目前 app 仍使用本機資料；手機與電腦尚未自動同步，v1.0 才會評估 cloud mode。</small>
+                  <small>
+                    {isCloudMode
+                      ? "目前 app 使用 Cloudflare D1 作為主資料源；localStorage 僅保留為本機備份 / fallback，仍不做自動雙向同步。"
+                      : "目前 app 仍使用本機資料；手機與電腦尚未自動同步，可用 JSON 建立 D1 雲端副本。"}
+                  </small>
                 </div>
                 <button
                   className="ghost-button secondary-action"
@@ -2230,6 +2246,11 @@ function App() {
                   type="button"
                   onClick={() => cloudBackupFileInputRef.current?.click()}
                   disabled={isCloudMode}
+                  title={
+                    isCloudMode
+                      ? "Cloud Mode 已啟用；若要重新覆蓋雲端副本，請先切回本機模式。"
+                      : "上傳 JSON 建立 D1 雲端副本"
+                  }
                 >
                   上傳 JSON 建立雲端副本
                 </button>
@@ -2241,6 +2262,11 @@ function App() {
                   onChange={previewCloudBackupFile}
                 />
               </div>
+              {isCloudMode && (
+                <p className="cloud-copy-note">
+                  Cloud Mode 已啟用；若要重新覆蓋雲端副本，請先切回本機模式。
+                </p>
+              )}
 
               {cloudBackupPreview && (
                 <div className="cloud-copy-preview" aria-live="polite">

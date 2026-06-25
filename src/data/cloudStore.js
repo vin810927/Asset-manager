@@ -1,4 +1,4 @@
-import { parseExchangeRateStore, parseFinancialGoals } from "../utils.js";
+import { parseAssetStore, parseExchangeRateStore, parseFinancialGoals } from "../utils.js";
 
 const DEFAULT_API_BASE_URL = "/api";
 
@@ -14,6 +14,27 @@ async function parseJsonResponse(response) {
   }
 
   return payload;
+}
+
+export function normalizeAssetsResponse(payload) {
+  if (Array.isArray(payload)) {
+    return {
+      assets: parseAssetStore({ assets: payload }).assets,
+      error: "",
+    };
+  }
+
+  if (Array.isArray(payload?.assets)) {
+    return {
+      assets: parseAssetStore({ assets: payload.assets }).assets,
+      error: "",
+    };
+  }
+
+  return {
+    assets: [],
+    error: "Cloud Mode 載入失敗：assets 回應格式不正確。",
+  };
 }
 
 export function createCloudStore({ apiBaseUrl = DEFAULT_API_BASE_URL, fetcher = globalThis.fetch } = {}) {
@@ -56,7 +77,13 @@ export function createCloudStore({ apiBaseUrl = DEFAULT_API_BASE_URL, fetcher = 
     },
     async getAssets() {
       const payload = await request("/assets");
-      return payload.assets ?? [];
+      const result = normalizeAssetsResponse(payload);
+
+      if (result.error) {
+        throw new Error(result.error);
+      }
+
+      return result.assets;
     },
     async createAsset(asset) {
       const payload = await request("/assets", {

@@ -1044,7 +1044,7 @@ function normalizeGroupKeyPart(value) {
 }
 
 export function groupTradedHoldings(assets, types = TRADED_ASSET_TYPES) {
-  const tradedAssets = assets.filter((asset) => types.includes(asset.type));
+  const tradedAssets = normalizeAssets(assets).filter((asset) => types.includes(asset.type));
   const groups = new Map();
 
   for (const asset of tradedAssets) {
@@ -1094,7 +1094,7 @@ export function groupStockHoldings(assets) {
 export function groupNonStockAssets(assets) {
   const groups = new Map();
 
-  for (const asset of assets) {
+  for (const asset of normalizeAssets(assets)) {
     if (isTradedAssetType(asset.type)) continue;
 
     const type = asset.type || "other";
@@ -1129,7 +1129,7 @@ export function groupNonStockAssets(assets) {
 export function summarizeByCurrency(assets) {
   const summary = new Map();
 
-  for (const asset of assets) {
+  for (const asset of normalizeAssets(assets)) {
     const currency = asset.currency || "TWD";
     const current = summary.get(currency) ?? {
       currency,
@@ -1305,7 +1305,7 @@ function getExistingAverageCostGapPercent(asset, assets = [], existingAssetId = 
   if (!Number.isFinite(buyPrice) || buyPrice <= 0) return null;
 
   const normalizedTicker = String(asset.ticker || "").trim().toUpperCase();
-  const comparableAssets = assets.filter(
+  const comparableAssets = normalizeAssets(assets).filter(
     (item) =>
       item.id !== existingAssetId &&
       isTradedAssetType(item.type) &&
@@ -1322,11 +1322,12 @@ function getExistingAverageCostGapPercent(asset, assets = [], existingAssetId = 
 }
 
 function getProjectedAssets(assets, asset, existingAssetId = null) {
-  if (!asset) return assets;
+  const assetList = normalizeAssets(assets);
+  if (!asset) return assetList;
 
   return existingAssetId
-    ? assets.map((item) => (item.id === existingAssetId ? asset : item))
-    : [asset, ...assets];
+    ? assetList.map((item) => (item.id === existingAssetId ? asset : item))
+    : [asset, ...assetList];
 }
 
 export function validateAssetInput(
@@ -1587,13 +1588,14 @@ export function getAssetValidationBadges({
 }
 
 export function getGoalMetrics({ assets, exchangeRates, financialGoals }) {
+  const assetList = normalizeAssets(assets);
   const goals = parseFinancialGoals(financialGoals);
-  const twdSummary = summarizeInBaseCurrency(summarizeByCurrency(assets), exchangeRates);
+  const twdSummary = summarizeInBaseCurrency(summarizeByCurrency(assetList), exchangeRates);
   let cashValueTwd = 0;
   let riskAssetValueTwd = 0;
   let missingValueCount = 0;
 
-  for (const asset of assets) {
+  for (const asset of assetList) {
     const valueTwd = getAssetValueInTwd(asset, exchangeRates);
     if (valueTwd === null) {
       missingValueCount += 1;
@@ -1621,13 +1623,14 @@ export function getGoalMetrics({ assets, exchangeRates, financialGoals }) {
 }
 
 export function buildAttentionItems({ assets, exchangeRates, financialGoals, now = new Date() }) {
+  const assetList = normalizeAssets(assets);
   const goals = parseFinancialGoals(financialGoals);
-  const twdSummary = summarizeInBaseCurrency(summarizeByCurrency(assets), exchangeRates);
-  const concentrationItems = getConcentrationItems({ assets, exchangeRates, financialGoals: goals });
-  const goalMetrics = getGoalMetrics({ assets, exchangeRates, financialGoals: goals });
+  const twdSummary = summarizeInBaseCurrency(summarizeByCurrency(assetList), exchangeRates);
+  const concentrationItems = getConcentrationItems({ assets: assetList, exchangeRates, financialGoals: goals });
+  const goalMetrics = getGoalMetrics({ assets: assetList, exchangeRates, financialGoals: goals });
   const items = [];
 
-  if (assets.length === 0) {
+  if (assetList.length === 0) {
     items.push({ key: "empty", label: "尚未建立任何資產資料" });
   }
 
@@ -1643,7 +1646,7 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
     items.push({ key: "stale-rates", label: `匯率資料已超過 ${exchangeRateAge} 天未更新` });
   }
 
-  const staleCashAssets = assets.filter(
+  const staleCashAssets = assetList.filter(
     (asset) => asset.type === "cash" && (getDaysSince(getAssetUpdatedAt(asset), now) ?? 0) > goals.staleAssetDays,
   );
   if (staleCashAssets.length > 0) {
@@ -1654,7 +1657,7 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
     });
   }
 
-  const staleStockAssets = assets.filter(
+  const staleStockAssets = assetList.filter(
     (asset) =>
       isTradedAssetType(asset.type) &&
       (getDaysSince(asset.marketPriceUpdatedAt || getAssetUpdatedAt(asset), now) ?? 0) > STALE_STOCK_PRICE_DAYS,
@@ -1667,7 +1670,7 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
     });
   }
 
-  const staleLoanAssets = assets.filter(
+  const staleLoanAssets = assetList.filter(
     (asset) => asset.type === "loan" && (getDaysSince(getAssetUpdatedAt(asset), now) ?? 0) > goals.staleAssetDays,
   );
   if (staleLoanAssets.length > 0) {
@@ -1678,7 +1681,7 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
     });
   }
 
-  const staleOtherAssets = assets.filter(
+  const staleOtherAssets = assetList.filter(
     (asset) =>
       (asset.type === "fund" || asset.type === "other") &&
       (getDaysSince(getAssetUpdatedAt(asset), now) ?? 0) > goals.staleAssetDays,
@@ -1691,7 +1694,7 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
     });
   }
 
-  const priceGapAssets = assets.filter((asset) => (getMarketPriceGapPercent(asset) ?? 0) > 80);
+  const priceGapAssets = assetList.filter((asset) => (getMarketPriceGapPercent(asset) ?? 0) > 80);
   if (priceGapAssets.length > 0) {
     items.push({
       key: "price-gap",
@@ -1700,9 +1703,9 @@ export function buildAttentionItems({ assets, exchangeRates, financialGoals, now
     });
   }
 
-  const validationWarnings = assets.flatMap((asset) =>
+  const validationWarnings = assetList.flatMap((asset) =>
     validateAssetInput(asset, {
-      assets,
+      assets: assetList,
       exchangeRates,
       financialGoals: goals,
       existingAssetId: asset.id,

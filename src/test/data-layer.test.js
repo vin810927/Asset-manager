@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { createCloudStore } from "../data/cloudStore.js";
+import { createCloudStore, normalizeAssetsResponse } from "../data/cloudStore.js";
 import {
   DATA_SOURCE_MODE_STORAGE_KEY,
   DATA_SOURCE_MODES,
@@ -10,6 +10,7 @@ import {
 } from "../data/dataSource.js";
 import { createLocalStore } from "../data/localStore.js";
 import { assetsFixture, exchangeRatesFixture, financialGoalsFixture } from "./fixtures.js";
+import { buildAttentionItems, groupTradedHoldings, summarizeByCurrency } from "../utils.js";
 
 function createMemoryLocalStorage() {
   const store = new Map();
@@ -78,6 +79,39 @@ describe("Asset Agent v0.7 data layer foundation", () => {
     await expect(cloudStore.getAssets()).rejects.toThrow("Cloud data source is not configured");
   });
 
+  it("cloudStore 會把 { ok, assets } response normalize 成 assets array", async () => {
+    const normalized = normalizeAssetsResponse({ ok: true, assets: [assetsFixture[0]] });
+    const cloudStore = createCloudStore({
+      fetcher: async () => new Response(JSON.stringify({ ok: true, assets: [assetsFixture[0]] })),
+    });
+
+    expect(normalized.assets).toEqual([assetsFixture[0]]);
+    expect(normalized.error).toBe("");
+    await expect(cloudStore.getAssets()).resolves.toEqual([assetsFixture[0]]);
+  });
+
+  it("cloudStore 仍可處理直接回傳 array 的 assets response", async () => {
+    const normalized = normalizeAssetsResponse([assetsFixture[0]]);
+    const cloudStore = createCloudStore({
+      fetcher: async () => new Response(JSON.stringify([assetsFixture[0]])),
+    });
+
+    expect(normalized.assets).toEqual([assetsFixture[0]]);
+    expect(normalized.error).toBe("");
+    await expect(cloudStore.getAssets()).resolves.toEqual([assetsFixture[0]]);
+  });
+
+  it("cloudStore 遇到 malformed assets response 會回報可讀錯誤而不是傳出 object", async () => {
+    const normalized = normalizeAssetsResponse({ ok: true, items: [assetsFixture[0]] });
+    const cloudStore = createCloudStore({
+      fetcher: async () => new Response(JSON.stringify({ ok: true, items: [assetsFixture[0]] })),
+    });
+
+    expect(normalized.assets).toEqual([]);
+    expect(normalized.error).toContain("assets 回應格式不正確");
+    await expect(cloudStore.getAssets()).rejects.toThrow("assets 回應格式不正確");
+  });
+
   it("設定 cloud mode 後 dataSource 走 cloudStore assets CRUD 與 goals / rates read", async () => {
     const calls = [];
     const cloudStore = createCloudStore({
@@ -123,6 +157,21 @@ describe("Asset Agent v0.7 data layer foundation", () => {
     expect(calls.map((call) => call.method)).toEqual(["GET", "POST", "PUT", "DELETE", "GET", "GET"]);
   });
 
+  it("dataSource cloud mode 的 loadAssets 永遠輸出 array", async () => {
+    const cloudStore = {
+      mode: "cloud",
+      status: { label: "Cloudflare D1 雲端資料" },
+      getAssets: async () => ({ ok: true, assets: [assetsFixture[0]] }),
+    };
+    const dataSource = createDataSource({
+      mode: DATA_SOURCE_MODES.CLOUD,
+      cloudStore,
+      localStore: createLocalStore(),
+    });
+
+    await expect(dataSource.loadAssets()).resolves.toEqual([assetsFixture[0]]);
+  });
+
   it("cloud 寫入失敗不污染 localStore", async () => {
     const localStore = createLocalStore();
     localStore.saveAssets([assetsFixture[0]]);
@@ -140,12 +189,41 @@ describe("Asset Agent v0.7 data layer foundation", () => {
     expect(localStore.loadAssets()).toEqual([assetsFixture[0]]);
   });
 
+  it("cloud 載入格式錯誤不污染 localStore", async () => {
+    const localStore = createLocalStore();
+    localStore.saveAssets([assetsFixture[0]]);
+
+    const cloudStore = createCloudStore({
+      fetcher: async () => new Response(JSON.stringify({ ok: true, items: [assetsFixture[1]] })),
+    });
+    const dataSource = createDataSource({
+      mode: DATA_SOURCE_MODES.CLOUD,
+      cloudStore,
+      localStore,
+    });
+
+    await expect(dataSource.loadAssets()).rejects.toThrow("assets 回應格式不正確");
+    expect(localStore.loadAssets()).toEqual([assetsFixture[0]]);
+  });
+
   it("cloudStore request error 可被 UI 捕捉", async () => {
     const cloudStore = createCloudStore({
       fetcher: async () => new Response(JSON.stringify({ ok: false, error: "Access token expired" }), { status: 401 }),
     });
 
     await expect(cloudStore.getAssets()).rejects.toThrow("Access token expired");
+  });
+
+  it("dashboard helpers 遇到非 array assets 不會因 .filter crash", () => {
+    expect(groupTradedHoldings({ ok: true, assets: assetsFixture })).toEqual([]);
+    expect(summarizeByCurrency({ ok: true, assets: assetsFixture })).toEqual([]);
+    expect(() =>
+      buildAttentionItems({
+        assets: { ok: true, assets: assetsFixture },
+        exchangeRates: exchangeRatesFixture,
+        financialGoals: financialGoalsFixture,
+      }),
+    ).not.toThrow();
   });
 
   it("D1 migration SQL 存在並包含核心 tables", () => {
