@@ -4,8 +4,8 @@ import { getCloudCopyStatus } from "../../functions/_shared/cloud-copy.js";
 import { onRequestDelete as onAssetDelete, onRequestPut as onAssetPut } from "../../functions/api/assets/[id].js";
 import { onRequestGet as onAssetsGet, onRequestPost as onAssetsPost } from "../../functions/api/assets/index.js";
 import { onRequestGet as onCloudStatusGet } from "../../functions/api/cloud-status.js";
-import { onRequestGet as onExchangeRatesGet } from "../../functions/api/exchange-rates.js";
-import { onRequestGet as onFinancialGoalsGet } from "../../functions/api/financial-goals.js";
+import { onRequestGet as onExchangeRatesGet, onRequestPut as onExchangeRatesPut } from "../../functions/api/exchange-rates.js";
+import { onRequestGet as onFinancialGoalsGet, onRequestPut as onFinancialGoalsPut } from "../../functions/api/financial-goals.js";
 import { onRequestPost as onImportLocalBackupPost } from "../../functions/api/import-local-backup.js";
 import { getCloudModeGateState, previewCloudBackupPayload } from "../utils.js";
 import { assetsFixture, exchangeRatesFixture, financialGoalsFixture, FIXED_NOW } from "./fixtures.js";
@@ -523,7 +523,7 @@ describe("D1 cloud copy import endpoint", () => {
   });
 });
 
-describe("D1 cloud copy read-only assets and status", () => {
+describe("D1 cloud copy assets, goals, rates, and status", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -800,7 +800,7 @@ describe("D1 cloud copy read-only assets and status", () => {
     expect(getPayload.assets.find((asset) => asset.id === "delete-me")).toBeUndefined();
   });
 
-  it("GET financial-goals / exchange-rates 回目前 user 的 D1 read-only data", async () => {
+  it("GET financial-goals / exchange-rates 回目前 user 的 D1 data", async () => {
     const db = createFakeD1();
     db.state.financialGoals.set("verified-user-id", {
       id: "goals",
@@ -851,9 +851,210 @@ describe("D1 cloud copy read-only assets and status", () => {
     expect(goalsResponse.status).toBe(200);
     expect(ratesResponse.status).toBe(200);
     expect(goalsPayload.financialGoals).toEqual(financialGoalsFixture);
-    expect(goalsPayload.readOnly).toBe(true);
     expect(ratesPayload.exchangeRates.fetchedAt).toBe(exchangeRatesFixture.fetchedAt);
-    expect(ratesPayload.readOnly).toBe(true);
+  });
+
+  it("GET / PUT financial-goals 未驗證會回 401", async () => {
+    const getResponse = await onFinancialGoalsGet({
+      request: new Request("https://asset-agent.test/api/financial-goals"),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: createFakeD1(),
+      },
+    });
+    const putResponse = await onFinancialGoalsPut({
+      request: new Request("https://asset-agent.test/api/financial-goals", {
+        method: "PUT",
+        body: JSON.stringify(financialGoalsFixture),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: createFakeD1(),
+      },
+    });
+
+    expect(getResponse.status).toBe(401);
+    expect(putResponse.status).toBe(401);
+  });
+
+  it("PUT /api/financial-goals 驗證後可建立 / 更新目前 user goals，且不信任 body.user_id", async () => {
+    const db = createFakeD1();
+    const firstGoals = {
+      ...financialGoalsFixture,
+      monthlyLivingExpense: 88000,
+      user_id: "malicious-user-id",
+      email: "attacker@example.com",
+    };
+    const secondGoals = {
+      ...financialGoalsFixture,
+      monthlyLivingExpense: 99000,
+      user_id: "other-user-id",
+    };
+
+    const createResponse = await onFinancialGoalsPut({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/financial-goals", {
+        method: "PUT",
+        body: JSON.stringify(firstGoals),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const updateResponse = await onFinancialGoalsPut({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/financial-goals", {
+        method: "PUT",
+        body: JSON.stringify(secondGoals),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const updatePayload = await jsonFromResponse(updateResponse);
+
+    expect(createResponse.status).toBe(200);
+    expect(updateResponse.status).toBe(200);
+    expect(updatePayload.financialGoals.monthlyLivingExpense).toBe(99000);
+    expect(updatePayload.financialGoals.user_id).toBeUndefined();
+    expect(db.state.financialGoals.has("verified-user-id")).toBe(true);
+    expect(db.state.financialGoals.has("malicious-user-id")).toBe(false);
+    expect(db.state.financialGoals.has("other-user-id")).toBe(false);
+  });
+
+  it("user A 不能讀寫 user B goals", async () => {
+    const db = createFakeD1();
+    db.state.financialGoals.set("other-user-id", {
+      id: "other-goals",
+      user_id: "other-user-id",
+      goals_json: JSON.stringify({ ...financialGoalsFixture, monthlyLivingExpense: 1 }),
+      created_at: FIXED_NOW,
+      updated_at: FIXED_NOW,
+    });
+
+    const getResponse = await onFinancialGoalsGet({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/financial-goals"),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const putResponse = await onFinancialGoalsPut({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/financial-goals", {
+        method: "PUT",
+        body: JSON.stringify({ ...financialGoalsFixture, monthlyLivingExpense: 123456 }),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const getPayload = await jsonFromResponse(getResponse);
+
+    expect(getResponse.status).toBe(200);
+    expect(getPayload.financialGoals).toBeNull();
+    expect(putResponse.status).toBe(200);
+    expect(JSON.parse(db.state.financialGoals.get("other-user-id").goals_json).monthlyLivingExpense).toBe(1);
+    expect(JSON.parse(db.state.financialGoals.get("verified-user-id").goals_json).monthlyLivingExpense).toBe(123456);
+  });
+
+  it("GET / PUT exchange-rates 未驗證會回 401", async () => {
+    const getResponse = await onExchangeRatesGet({
+      request: new Request("https://asset-agent.test/api/exchange-rates"),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: createFakeD1(),
+      },
+    });
+    const putResponse = await onExchangeRatesPut({
+      request: new Request("https://asset-agent.test/api/exchange-rates", {
+        method: "PUT",
+        body: JSON.stringify(exchangeRatesFixture),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: createFakeD1(),
+      },
+    });
+
+    expect(getResponse.status).toBe(401);
+    expect(putResponse.status).toBe(401);
+  });
+
+  it("PUT /api/exchange-rates 驗證後可 replace 目前 user exchangeRates，且不信任 body.user_id", async () => {
+    const db = createFakeD1();
+    db.state.exchangeRates.push({
+      id: "rates-old",
+      user_id: "verified-user-id",
+      rates_json: JSON.stringify({ ...exchangeRatesFixture, fetchedAt: "2026-01-01T00:00:00.000Z" }),
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    });
+    const nextRates = {
+      ...exchangeRatesFixture,
+      fetchedAt: "2026-06-20T00:00:00.000Z",
+      user_id: "malicious-user-id",
+      email: "attacker@example.com",
+    };
+
+    const putResponse = await onExchangeRatesPut({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/exchange-rates", {
+        method: "PUT",
+        body: JSON.stringify(nextRates),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const putPayload = await jsonFromResponse(putResponse);
+    const verifiedRates = db.state.exchangeRates.filter((row) => row.user_id === "verified-user-id");
+
+    expect(putResponse.status).toBe(200);
+    expect(putPayload.exchangeRates.fetchedAt).toBe("2026-06-20T00:00:00.000Z");
+    expect(putPayload.exchangeRates.user_id).toBeUndefined();
+    expect(verifiedRates).toHaveLength(1);
+    expect(db.state.exchangeRates.some((row) => row.user_id === "malicious-user-id")).toBe(false);
+  });
+
+  it("user A 不能讀寫 user B exchangeRates", async () => {
+    const db = createFakeD1();
+    db.state.exchangeRates.push({
+      id: "other-rates",
+      user_id: "other-user-id",
+      rates_json: JSON.stringify({ ...exchangeRatesFixture, fetchedAt: "2026-01-01T00:00:00.000Z" }),
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    });
+
+    const getResponse = await onExchangeRatesGet({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/exchange-rates"),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const putResponse = await onExchangeRatesPut({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/exchange-rates", {
+        method: "PUT",
+        body: JSON.stringify({ ...exchangeRatesFixture, fetchedAt: "2026-06-20T00:00:00.000Z" }),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const getPayload = await jsonFromResponse(getResponse);
+
+    expect(getResponse.status).toBe(200);
+    expect(getPayload.exchangeRates).toBeNull();
+    expect(putResponse.status).toBe(200);
+    expect(JSON.parse(db.state.exchangeRates.find((row) => row.user_id === "other-user-id").rates_json).fetchedAt).toBe(
+      "2026-01-01T00:00:00.000Z",
+    );
+    expect(JSON.parse(db.state.exchangeRates.find((row) => row.user_id === "verified-user-id").rates_json).fetchedAt).toBe(
+      "2026-06-20T00:00:00.000Z",
+    );
   });
 
   it("cloud status 無 cloud copy 時回 hasCloudCopy false", async () => {

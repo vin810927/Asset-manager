@@ -9,7 +9,8 @@
 - 使用 React + Vite 建立前端專案
 - 預設仍以 `localStorage` 作為主資料源，不需後端即可使用
 - v1.0 新增 opt-in Cloud Mode；使用者明確啟用後，assets 會改以 Cloudflare D1 作為主資料源
-- v1.0 的 Cloud Mode 不是自動雙向同步；financialGoals 與 exchangeRates 先從 D1 read-only 載入，雲端寫入延到 v1.1
+- v1.1 起，Cloud Mode 下 assets、financialGoals 與 exchangeRates 都會以 Cloudflare D1 read/write 管理
+- Cloud Mode 不是自動雙向同步；手機與電腦共用 D1 資料，但需要重新整理或重新讀取才會看到另一端變更
 - 支援資產類型：
   - 現金
   - 股票
@@ -47,17 +48,26 @@
 
 ## 資料來源狀態
 
-目前正式使用的 canonical data 仍是目前瀏覽器內的 `localStorage`，因此手機、電腦與不同瀏覽器之間仍會各自保存資料。
+預設資料源仍是目前瀏覽器內的 `localStorage`，因此未啟用 Cloud Mode 時，手機、電腦與不同瀏覽器之間仍會各自保存資料。啟用 Cloud Mode 後，Cloudflare D1 會成為主要資料源。
 
-Cloudflare Access 目前保護 Cloudflare Pages 入口，API 也會驗證 Access JWT。v0.9 可以把本機 JSON 備份建立成 D1 雲端副本。v1.0 起，使用者可以在已有 D1 雲端副本後，手動 opt-in 啟用 Cloud Mode，讓 assets 的新增、編輯與刪除寫入 D1。
+Cloudflare Access 目前保護 Cloudflare Pages 入口，API 也會驗證 Access JWT。v0.9 可以把本機 JSON 備份建立成 D1 雲端副本。v1.0 起，使用者可以在已有 D1 雲端副本後，手動 opt-in 啟用 Cloud Mode，讓 assets 的新增、編輯與刪除寫入 D1。v1.1 起，financialGoals 與 exchangeRates 也會在 Cloud Mode 下寫入 D1。
 
 Cloud Mode 不是自動同步。啟用前後都不會自動把 D1 資料覆蓋回 localStorage，也不會做雙向同步、背景同步、offline queue 或 conflict resolution。
+`localStorage` 仍可作為 fallback / 本機模式；切回本機模式時會使用瀏覽器原本保存的本機資料。
 
 目前 UI 會明確顯示：
 
 - 目前資料來源：本機瀏覽器 `localStorage`
 - Cloud Mode：未啟用 / 已啟用
-- Cloudflare D1 雲端副本：可建立 / 已建立 / 無法檢查
+- Cloudflare D1 雲端副本：可建立 / 已建立 / 已啟用 / 無法檢查
+
+Cloud Mode 啟用後：
+
+- assets：D1 read/write
+- financialGoals：D1 read/write
+- exchangeRates：D1 read/write
+- localStorage：僅作為本機 fallback / 手動備份
+- 仍不做自動雙向同步
 
 啟用 Cloud Mode 的條件：
 
@@ -66,6 +76,8 @@ Cloud Mode 不是自動同步。啟用前後都不會自動把 D1 資料覆蓋�
 - 已用 JSON backup 建立 D1 cloud copy
 - D1 cloud copy 的 assets 筆數大於 0
 - 使用者已確認啟用前建議先匯出 JSON 備份，且了解 localStorage 不會自動雙向同步
+
+v1.2 才會考慮 conflict detection、last-write-wins warning 或 changed elsewhere 提示；v1.3 以後才考慮 agent report / scheduled snapshot。
 
 ## 技術棧
 
@@ -317,23 +329,23 @@ PUT    /api/exchange-rates
 POST   /api/import-local-backup
 ```
 
-v1.0 已實作：
+v1.1 已實作：
 
 ```text
 GET    /api/assets               讀取目前 verified user 的 active D1 assets
 POST   /api/assets               新增單筆 D1 asset
 PUT    /api/assets/:id           更新目前 verified user 的單筆 D1 asset
 DELETE /api/assets/:id           soft delete 目前 verified user 的單筆 D1 asset
-GET    /api/financial-goals      讀取目前 verified user 的 D1 goals_json，v1.0 read-only
-GET    /api/exchange-rates       讀取目前 verified user 最新 D1 rates_json，v1.0 read-only
+GET    /api/financial-goals      讀取目前 verified user 的 D1 goals_json
+PUT    /api/financial-goals      upsert 目前 verified user 的 D1 goals_json
+GET    /api/exchange-rates       讀取目前 verified user 最新 D1 rates_json
+PUT    /api/exchange-rates       replace 目前 verified user 的最新 D1 rates_json
 GET    /api/cloud-status         回傳目前登入使用者是否已有雲端副本
 POST   /api/import-local-backup  將本機 JSON backup 建立為 D1 雲端副本
 ```
 
 仍未實作：
 
-- PUT `/api/financial-goals`
-- PUT `/api/exchange-rates`
 - localStorage 與 D1 的雙向同步、自動同步、衝突處理
 - offline queue
 
@@ -344,7 +356,7 @@ Cloudflare Access identity 設計：
 - v0.8 驗證 issuer、audience、signature、`exp` 與 `nbf`，並從已驗證 token 取得 `sub`、`email` 與 `name`
 - 若缺少 token、token 無效、audience 不符或 token 過期，資料 API 會回 401
 - 若 `ACCESS_TEAM_DOMAIN` 或 `ACCESS_AUD` 未設定，資料 API 會明確回報 Access 設定缺失，不會假裝成功
-- v1.0 僅在使用者 opt-in Cloud Mode 後，讓 assets CRUD 寫入 D1；financial goals 與 exchange rates 目前仍是 D1 read-only
+- v1.1 在使用者 opt-in Cloud Mode 後，讓 assets、financial goals 與 exchange rates 都寫入 D1
 
 本機建議使用 `asset-agent-node` conda environment：
 
@@ -430,19 +442,20 @@ v0.9 的「上傳 JSON 建立雲端副本」只接受 Asset Agent JSON export，
 4. 後端會 upsert `profiles`，並將 assets、financial goals、exchange rates 寫入目前使用者的 cloud copy。
 5. 匯入採 replace cloud copy 策略：同一 user 既有 active assets 先 soft delete，再把這次 JSON backup 的 assets 寫成新的 active copy；同一 user 的 financial goals 與 exchange rates 會先刪除後重建。
 
-v1.0 Cloud Mode：
+v1.1 Cloud Mode：
 
 - 預設仍是 localStorage mode
 - 只有使用者明確勾選確認並按下啟用後，才會把資料來源切到 D1
 - cloud mode 下 assets 的新增、編輯與刪除會寫入 D1
-- cloud mode 下 financialGoals / exchangeRates 會從 D1 read-only 載入
+- cloud mode 下 financialGoals / exchangeRates 也會寫入 D1
+- 手機與電腦在 Cloud Mode 下共用 D1 資料，但需要重新整理或重新讀取才會看到另一端變更
 - cloud 寫入失敗時，畫面不會先更新，並會提示「資料未變更」
 - 若 D1 / Access / network 發生錯誤，使用者可以切回本機模式
 
 重要限制：
 
 - Cloud copy 不等於 sync。
-- v1.0 仍不做雙向同步、背景同步、offline queue 或 conflict resolution。
+- v1.1 仍不做雙向同步、背景同步、offline queue 或 conflict resolution。
 - localStorage 不會被 D1 自動覆蓋。
 
 ## 資料驗證規則
@@ -464,9 +477,9 @@ v1.0 Cloud Mode：
 
 後續可以逐步加入：
 
-- Cloudflare D1 雲端資料模式的 financialGoals / exchangeRates 寫入（v1.1）
 - cloud copy 到 dashboard 的人工比對 / 還原工具
-- conflict detection / sync / offline queue（v1.2 以後再評估）
+- conflict detection / last-write-wins warning / changed elsewhere 提示（v1.2 以後再評估）
+- agent report / scheduled snapshot（v1.3 以後再評估）
 - 使用者登入
 - 匯率 API
 - 股票現價 API

@@ -2,6 +2,14 @@ import { createHttpError } from "./http.js";
 
 const SUPPORTED_BACKUP_SCHEMA_VERSION = 1;
 const ASSET_TYPES = new Set(["cash", "stock", "etf", "fund", "loan", "other"]);
+const DEFAULT_FINANCIAL_GOALS = {
+  monthlyLivingExpense: 50000,
+  emergencyMonths: 6,
+  singleHoldingLimitPercent: 20,
+  stockExposureLimitPercent: 60,
+  debtRatioLimitPercent: 50,
+  staleAssetDays: 30,
+};
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -17,6 +25,11 @@ function normalizeOptionalNumber(value) {
 
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function normalizeGoalNumber(value, fallback, minimum = 0) {
+  const numberValue = Number(value ?? fallback);
+  return Math.max(minimum, Number.isFinite(numberValue) ? numberValue : fallback);
 }
 
 function getNowIso(now = new Date()) {
@@ -268,6 +281,18 @@ function financialGoalsInsertStatement(db, userId, financialGoals, now, createId
     .bind(createId(), userId, JSON.stringify(financialGoals), now, now);
 }
 
+function financialGoalsUpsertStatement(db, userId, financialGoals, now, createId) {
+  return db
+    .prepare(
+      `INSERT INTO financial_goals (id, user_id, goals_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         goals_json = excluded.goals_json,
+         updated_at = excluded.updated_at`,
+    )
+    .bind(createId(), userId, JSON.stringify(financialGoals), now, now);
+}
+
 function exchangeRatesInsertStatement(db, userId, exchangeRates, now, createId) {
   return db
     .prepare(
@@ -290,6 +315,49 @@ function exchangeRatesInsertStatement(db, userId, exchangeRates, now, createId) 
       now,
       now,
     );
+}
+
+function normalizeFinancialGoalsPayload(payload) {
+  const value = isPlainObject(payload?.financialGoals) ? payload.financialGoals : payload;
+
+  if (!isPlainObject(value)) {
+    throw createHttpError("Financial goals payload must be an object.", 400);
+  }
+
+  return {
+    monthlyLivingExpense: normalizeGoalNumber(value.monthlyLivingExpense, DEFAULT_FINANCIAL_GOALS.monthlyLivingExpense),
+    emergencyMonths: normalizeGoalNumber(value.emergencyMonths, DEFAULT_FINANCIAL_GOALS.emergencyMonths),
+    singleHoldingLimitPercent: normalizeGoalNumber(
+      value.singleHoldingLimitPercent,
+      DEFAULT_FINANCIAL_GOALS.singleHoldingLimitPercent,
+    ),
+    stockExposureLimitPercent: normalizeGoalNumber(
+      value.stockExposureLimitPercent,
+      DEFAULT_FINANCIAL_GOALS.stockExposureLimitPercent,
+    ),
+    debtRatioLimitPercent: normalizeGoalNumber(value.debtRatioLimitPercent, DEFAULT_FINANCIAL_GOALS.debtRatioLimitPercent),
+    staleAssetDays: normalizeGoalNumber(value.staleAssetDays, DEFAULT_FINANCIAL_GOALS.staleAssetDays, 1),
+  };
+}
+
+function normalizeExchangeRatesPayload(payload, now) {
+  const value = isPlainObject(payload?.exchangeRates) ? payload.exchangeRates : payload;
+
+  if (!isPlainObject(value)) {
+    throw createHttpError("Exchange rates payload must be an object.", 400);
+  }
+
+  return {
+    schemaVersion: Number(value.schemaVersion) || SUPPORTED_BACKUP_SCHEMA_VERSION,
+    baseCurrency: normalizeOptionalText(value.baseCurrency) || "TWD",
+    provider: normalizeOptionalText(value.provider),
+    providerUrl: normalizeOptionalText(value.providerUrl),
+    providerDocumentationUrl: normalizeOptionalText(value.providerDocumentationUrl),
+    fetchedAt: normalizeOptionalText(value.fetchedAt) || now,
+    sourceUpdatedAt: normalizeOptionalText(value.sourceUpdatedAt),
+    sourceNextUpdateAt: normalizeOptionalText(value.sourceNextUpdateAt),
+    rates: isPlainObject(value.rates) ? value.rates : {},
+  };
 }
 
 export async function importLocalBackupToCloudCopy({
@@ -506,6 +574,29 @@ export async function getCloudFinancialGoals(db, user) {
   };
 }
 
+export async function updateCloudFinancialGoals({
+  db,
+  user,
+  financialGoals,
+  now = new Date(),
+  createId = () => crypto.randomUUID(),
+} = {}) {
+  if (!db) {
+    throw createHttpError("Cloudflare D1 binding ASSET_AGENT_DB is not configured.", 503);
+  }
+
+  const verifiedUser = assertVerifiedUser(user);
+  const goalsPayload = normalizeFinancialGoalsPayload(financialGoals);
+  const timestamp = getNowIso(now);
+
+  await db.batch([
+    profileUpsertStatement(db, verifiedUser, timestamp),
+    financialGoalsUpsertStatement(db, verifiedUser.id, goalsPayload, timestamp, createId),
+  ]);
+
+  return getCloudFinancialGoals(db, user);
+}
+
 export async function getCloudExchangeRates(db, user) {
   const verifiedUser = assertVerifiedUser(user);
   const row = await db
@@ -517,6 +608,30 @@ export async function getCloudExchangeRates(db, user) {
     exchangeRates: parseJsonColumn(row?.rates_json, null),
     updatedAt: row?.updated_at ?? null,
   };
+}
+
+export async function updateCloudExchangeRates({
+  db,
+  user,
+  exchangeRates,
+  now = new Date(),
+  createId = () => crypto.randomUUID(),
+} = {}) {
+  if (!db) {
+    throw createHttpError("Cloudflare D1 binding ASSET_AGENT_DB is not configured.", 503);
+  }
+
+  const verifiedUser = assertVerifiedUser(user);
+  const timestamp = getNowIso(now);
+  const exchangeRatesPayload = normalizeExchangeRatesPayload(exchangeRates, timestamp);
+
+  await db.batch([
+    profileUpsertStatement(db, verifiedUser, timestamp),
+    db.prepare("DELETE FROM exchange_rates WHERE user_id = ?").bind(verifiedUser.id),
+    exchangeRatesInsertStatement(db, verifiedUser.id, exchangeRatesPayload, timestamp, createId),
+  ]);
+
+  return getCloudExchangeRates(db, user);
 }
 
 export async function getCloudCopyStatus(db, user) {

@@ -690,6 +690,7 @@ function App() {
   const [isImportingCloudBackup, setIsImportingCloudBackup] = useState(false);
   const [isLoadingCloudData, setIsLoadingCloudData] = useState(false);
   const [isSavingAsset, setIsSavingAsset] = useState(false);
+  const [isSavingCloudSettings, setIsSavingCloudSettings] = useState(false);
 
   useEffect(() => {
     if (!isCloudMode) {
@@ -1261,21 +1262,30 @@ function App() {
   }
 
   async function updateLatestExchangeRates() {
-    if (isCloudMode) {
-      setExchangeRateStatus("Cloud Mode v1.0 的匯率為 D1 read-only；請先切回本機模式再更新。");
-      return;
-    }
-
     setIsFetchingRates(true);
-    setExchangeRateStatus("正在更新公開匯率...");
+    setExchangeRateStatus(isCloudMode ? "正在更新公開匯率並儲存到 D1..." : "正在更新公開匯率...");
+    let latestRates = null;
 
     try {
-      const latestRates = await fetchLatestExchangeRates();
+      latestRates = await fetchLatestExchangeRates();
+
+      if (isCloudMode) {
+        latestRates = await appDataSource.saveExchangeRates(latestRates);
+      }
+
       setExchangeRates(latestRates);
       setExchangeRateDrafts({});
-      setExchangeRateStatus(`匯率已更新，資料時間：${formatDateTime(latestRates.sourceUpdatedAt)}`);
+      setExchangeRateStatus(
+        isCloudMode
+          ? `匯率已更新並儲存到 D1，資料時間：${formatDateTime(latestRates.sourceUpdatedAt)}`
+          : `匯率已更新，資料時間：${formatDateTime(latestRates.sourceUpdatedAt)}`,
+      );
     } catch (error) {
-      setExchangeRateStatus(error.message || "匯率更新失敗，請稍後再試。");
+      setExchangeRateStatus(
+        isCloudMode && latestRates
+          ? `儲存失敗，資料未變更：${error.message || "D1 匯率寫入失敗。"}`
+          : error.message || "匯率更新失敗，請稍後再試。",
+      );
     } finally {
       setIsFetchingRates(false);
     }
@@ -1288,31 +1298,48 @@ function App() {
     }));
   }
 
-  function saveManualRate(currency) {
-    if (isCloudMode) {
-      setExchangeRateStatus("Cloud Mode v1.0 的匯率為 D1 read-only；請先切回本機模式再手動更新。");
-      return;
-    }
-
+  async function saveManualRate(currency) {
     const rate = toNumber(getExchangeRateDraft(currency));
     if (rate <= 0) return alert("請輸入大於 0 的匯率。");
 
-    setExchangeRates((current) => setManualExchangeRate(current, currency, rate));
-    setExchangeRateStatus(`${currency} 匯率已手動更新。`);
+    const nextRates = setManualExchangeRate(exchangeRates, currency, rate);
+
+    try {
+      setIsSavingCloudSettings(isCloudMode);
+      const savedRates = isCloudMode ? await appDataSource.saveExchangeRates(nextRates) : nextRates;
+
+      setExchangeRates(savedRates);
+      setExchangeRateStatus(isCloudMode ? `${currency} 匯率已手動更新並儲存到 D1。` : `${currency} 匯率已手動更新。`);
+    } catch (error) {
+      setExchangeRateStatus(`儲存失敗，資料未變更：${error.message || "D1 匯率寫入失敗。"}`);
+    } finally {
+      setIsSavingCloudSettings(false);
+    }
   }
 
-  function updateFinancialGoal(field, value) {
-    if (isCloudMode) {
-      setDataToolStatus("Cloud Mode v1.0 的理財目標為 D1 read-only；v1.1 才會支援寫入。");
+  async function updateFinancialGoal(field, value) {
+    const numberValue = toNumber(value);
+    const nextGoals = {
+      ...financialGoals,
+      [field]: field === "staleAssetDays" ? Math.max(1, numberValue) : Math.max(0, numberValue),
+    };
+
+    if (!isCloudMode) {
+      setFinancialGoals(nextGoals);
       return;
     }
 
-    const numberValue = toNumber(value);
+    try {
+      setIsSavingCloudSettings(true);
+      const savedGoals = await appDataSource.saveFinancialGoals(nextGoals);
 
-    setFinancialGoals((current) => ({
-      ...current,
-      [field]: field === "staleAssetDays" ? Math.max(1, numberValue) : Math.max(0, numberValue),
-    }));
+      setFinancialGoals(savedGoals);
+      setDataToolStatus("理財目標已儲存到 D1。");
+    } catch (error) {
+      setDataToolStatus(`儲存失敗，資料未變更：${error.message || "D1 理財目標寫入失敗。"}`);
+    } finally {
+      setIsSavingCloudSettings(false);
+    }
   }
 
   function exportJsonData() {
@@ -1686,7 +1713,7 @@ function App() {
                 aria-label="更新最新匯率"
                 title="更新最新匯率"
                 onClick={updateLatestExchangeRates}
-                disabled={isFetchingRates || isCloudMode}
+                disabled={isFetchingRates || isSavingCloudSettings}
               >
                 {isFetchingRates ? <LoadingIcon /> : <RefreshIcon />}
               </button>
@@ -1730,7 +1757,7 @@ function App() {
                     type="number"
                     min="0"
                     step="0.000001"
-                    disabled={row.currency === "TWD" || isCloudMode}
+                    disabled={row.currency === "TWD" || isSavingCloudSettings}
                     value={getExchangeRateDraft(row.currency)}
                     onChange={(event) => updateExchangeRateDraft(row.currency, event.target.value)}
                     aria-label={`${row.currency} 匯率`}
@@ -1749,10 +1776,10 @@ function App() {
                   <button
                     className="small-action secondary-action"
                     type="button"
-                    disabled={row.currency === "TWD" || isCloudMode}
+                    disabled={row.currency === "TWD" || isSavingCloudSettings}
                     onClick={() => saveManualRate(row.currency)}
                   >
-                    儲存
+                    {isSavingCloudSettings && isCloudMode ? "儲存中" : "儲存"}
                   </button>
                 </div>
               ))}
@@ -1761,7 +1788,7 @@ function App() {
             <p className="rate-status">
               {exchangeRateStatus ||
                 (isCloudMode
-                  ? `目前來源：${exchangeRates.provider}。Cloud Mode v1.0 的匯率由 D1 read-only 載入。`
+                  ? `目前來源：${exchangeRates.provider}。Cloud Mode v1.1 的匯率由 D1 read/write 管理。`
                   : `目前來源：${exchangeRates.provider}。公開端點會抓取最新可用資料，必要時可手動覆寫。`)}
             </p>
           </div>
@@ -2175,7 +2202,7 @@ function App() {
                   <strong>{isCloudMode ? "Cloud Mode 已啟用" : "啟用 Cloud Mode"}</strong>
                   <small>
                     {isCloudMode
-                      ? "目前新增 / 編輯 / 刪除會寫入 Cloudflare D1；localStorage 不會自動雙向同步。"
+                      ? "目前 assets / financialGoals / exchangeRates 會寫入 Cloudflare D1；localStorage 不會自動雙向同步。"
                       : "啟用前必須已有 D1 雲端副本，並建議先匯出 JSON 備份。"}
                   </small>
                 </div>
@@ -2199,7 +2226,7 @@ function App() {
                 <div className={`cloud-mode-note is-${cloudModeStatus.state}`}>
                   <strong>{cloudModeStatus.state === "error" ? "Cloud error" : "Cloudflare D1 雲端資料"}</strong>
                   <small>{cloudModeStatus.message || "Cloud Mode 使用 D1 作為主資料源。"}</small>
-                  <small>financialGoals / exchangeRates 在 v1.0 為 D1 read-only，v1.1 才支援雲端寫入。</small>
+                  <small>assets / financialGoals / exchangeRates 皆為 D1 read/write；仍不做自動雙向同步。</small>
                   {isLoadingCloudData && <small>正在載入 D1 資料...</small>}
                 </div>
               ) : (
@@ -2325,7 +2352,7 @@ function App() {
                   type="number"
                   min="0"
                   value={financialGoals.monthlyLivingExpense}
-                  disabled={isCloudMode}
+                  disabled={isSavingCloudSettings}
                   onChange={(event) => updateFinancialGoal("monthlyLivingExpense", toNumber(event.target.value))}
                 />
               </label>
@@ -2336,7 +2363,7 @@ function App() {
                   min="0"
                   step="0.5"
                   value={financialGoals.emergencyMonths}
-                  disabled={isCloudMode}
+                  disabled={isSavingCloudSettings}
                   onChange={(event) => updateFinancialGoal("emergencyMonths", toNumber(event.target.value))}
                 />
               </label>
@@ -2347,7 +2374,7 @@ function App() {
                   min="0"
                   step="0.1"
                   value={financialGoals.singleHoldingLimitPercent}
-                  disabled={isCloudMode}
+                  disabled={isSavingCloudSettings}
                   onChange={(event) => updateFinancialGoal("singleHoldingLimitPercent", toNumber(event.target.value))}
                 />
               </label>
@@ -2358,7 +2385,7 @@ function App() {
                   min="0"
                   step="0.1"
                   value={financialGoals.stockExposureLimitPercent}
-                  disabled={isCloudMode}
+                  disabled={isSavingCloudSettings}
                   onChange={(event) => updateFinancialGoal("stockExposureLimitPercent", toNumber(event.target.value))}
                 />
               </label>
@@ -2369,7 +2396,7 @@ function App() {
                   min="0"
                   step="0.1"
                   value={financialGoals.debtRatioLimitPercent}
-                  disabled={isCloudMode}
+                  disabled={isSavingCloudSettings}
                   onChange={(event) => updateFinancialGoal("debtRatioLimitPercent", toNumber(event.target.value))}
                 />
               </label>
@@ -2379,15 +2406,15 @@ function App() {
                   type="number"
                   min="1"
                   value={financialGoals.staleAssetDays}
-                  disabled={isCloudMode}
+                  disabled={isSavingCloudSettings}
                   onChange={(event) => updateFinancialGoal("staleAssetDays", toNumber(event.target.value))}
                 />
               </label>
             </div>
             {isCloudMode && (
               <p className="cloud-copy-note">
-                Cloud Mode v1.0 的理財目標與匯率由 D1 read-only 載入；若要修改，請先切回本機模式，v1.1
-                才會支援雲端寫入。
+                Cloud Mode v1.1 的 assets、理財目標與匯率皆由 D1 read/write 管理；localStorage
+                僅作為本機 fallback / 手動備份，仍不做自動雙向同步。
               </p>
             )}
 

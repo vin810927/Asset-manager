@@ -1,9 +1,7 @@
 import { requireAuthenticatedUser } from "../_shared/access.js";
-import { getCloudExchangeRates } from "../_shared/cloud-copy.js";
+import { getCloudExchangeRates, updateCloudExchangeRates } from "../_shared/cloud-copy.js";
 import { requireD1Database } from "../_shared/db.js";
-import { createHttpError, errorResponse, jsonResponse, readJsonBody } from "../_shared/http.js";
-
-const RATES_SYNC_NOT_IMPLEMENTED = "Cloud exchange rates sync is not implemented yet. LocalStorage remains the primary data source.";
+import { errorResponse, jsonResponse, readJsonBody } from "../_shared/http.js";
 
 export async function onRequestGet({ request, env }) {
   try {
@@ -19,9 +17,12 @@ export async function onRequestGet({ request, env }) {
 
 export async function onRequestPut({ request, env }) {
   try {
-    await requireAuthenticatedUser(request, env);
-    await readJsonBody(request);
-    throw createHttpError(RATES_SYNC_NOT_IMPLEMENTED, 501);
+    const user = await requireAuthenticatedUser(request, env);
+    const db = requireD1Database(env);
+    const exchangeRates = await readJsonBody(request);
+    const result = await updateCloudExchangeRates({ db, user, exchangeRates });
+
+    return jsonResponse({ ok: true, ...result });
   } catch (error) {
     return errorResponse(error);
   }

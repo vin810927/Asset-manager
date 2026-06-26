@@ -2,8 +2,8 @@
 
 ## 近期優先
 
-- [ ] v1.1：支援 financialGoals / exchangeRates cloud write
-- [ ] v1.2：設計雲端同步衝突偵測與 rollback 策略
+- [ ] v1.2：設計雲端同步衝突偵測、last-write-wins warning 與 rollback 策略
+- [ ] v1.3：建立 scheduled snapshot 與 agent report foundation
 - [ ] 新增 cloud copy 與本機資料的人工比對 / 還原流程
 - [ ] 改善 CSV preview 的欄位對照與錯誤定位
 - [ ] 新增基金類型的專屬欄位
@@ -85,3 +85,4 @@
 - [x] v1.0：加入 opt-in Cloud Mode，使用者確認後才以 D1 作為 assets 主資料源
 - [x] v1.0：實作 D1 assets CRUD，並維持 localStorage 為預設資料源
 - [x] v1.0：financialGoals / exchangeRates 在 Cloud Mode 下從 D1 read-only 載入
+- [x] v1.1：financialGoals / exchangeRates 在 Cloud Mode 下支援 D1 read/write

@@ -64,7 +64,7 @@ export function createCloudStore({ apiBaseUrl = DEFAULT_API_BASE_URL, fetcher = 
     status: {
       mode: "cloud",
       label: "Cloudflare D1 雲端資料",
-      description: "Cloud Mode 已啟用；D1 是主資料源，但不做自動雙向同步。",
+      description: "Cloud Mode 已啟用；assets / financialGoals / exchangeRates 由 D1 read/write 管理，但不做自動雙向同步。",
     },
     isConfigured() {
       return typeof fetcher === "function";
@@ -108,21 +108,29 @@ export function createCloudStore({ apiBaseUrl = DEFAULT_API_BASE_URL, fetcher = 
       const payload = await request("/financial-goals");
       return parseFinancialGoals(payload.financialGoals);
     },
-    saveFinancialGoals(financialGoals) {
-      return request("/financial-goals", {
+    async updateFinancialGoals(financialGoals) {
+      const payload = await request("/financial-goals", {
         method: "PUT",
         body: JSON.stringify(financialGoals),
       });
+      return parseFinancialGoals(payload.financialGoals);
+    },
+    saveFinancialGoals(financialGoals) {
+      return this.updateFinancialGoals(financialGoals);
     },
     async getExchangeRates() {
       const payload = await request("/exchange-rates");
       return parseExchangeRateStore(payload.exchangeRates);
     },
-    saveExchangeRates(exchangeRates) {
-      return request("/exchange-rates", {
+    async updateExchangeRates(exchangeRates) {
+      const payload = await request("/exchange-rates", {
         method: "PUT",
         body: JSON.stringify(exchangeRates),
       });
+      return parseExchangeRateStore(payload.exchangeRates);
+    },
+    saveExchangeRates(exchangeRates) {
+      return this.updateExchangeRates(exchangeRates);
     },
     importLocalBackup(backupPayload) {
       return request("/import-local-backup", {

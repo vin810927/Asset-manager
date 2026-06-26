@@ -10,7 +10,13 @@ import {
 } from "../data/dataSource.js";
 import { createLocalStore } from "../data/localStore.js";
 import { assetsFixture, exchangeRatesFixture, financialGoalsFixture } from "./fixtures.js";
-import { buildAttentionItems, groupTradedHoldings, summarizeByCurrency } from "../utils.js";
+import {
+  buildAttentionItems,
+  getGoalMetrics,
+  groupTradedHoldings,
+  summarizeByCurrency,
+  summarizeInBaseCurrency,
+} from "../utils.js";
 
 function createMemoryLocalStorage() {
   const store = new Map();
@@ -112,7 +118,7 @@ describe("Asset Agent v0.7 data layer foundation", () => {
     await expect(cloudStore.getAssets()).rejects.toThrow("assets 回應格式不正確");
   });
 
-  it("設定 cloud mode 後 dataSource 走 cloudStore assets CRUD 與 goals / rates read", async () => {
+  it("設定 cloud mode 後 dataSource 走 cloudStore assets CRUD 與 goals / rates read-write", async () => {
     const calls = [];
     const cloudStore = createCloudStore({
       fetcher: async (url, options = {}) => {
@@ -130,12 +136,20 @@ describe("Asset Agent v0.7 data layer foundation", () => {
           return new Response(JSON.stringify({ ok: true, asset: { ...assetsFixture[0], amount: 123 } }));
         }
 
-        if (String(url).endsWith("/financial-goals")) {
-          return new Response(JSON.stringify({ ok: true, financialGoals: financialGoalsFixture, readOnly: true }));
+        if (String(url).endsWith("/financial-goals") && !options.method) {
+          return new Response(JSON.stringify({ ok: true, financialGoals: financialGoalsFixture }));
         }
 
-        if (String(url).endsWith("/exchange-rates")) {
-          return new Response(JSON.stringify({ ok: true, exchangeRates: exchangeRatesFixture, readOnly: true }));
+        if (String(url).endsWith("/financial-goals") && options.method === "PUT") {
+          return new Response(JSON.stringify({ ok: true, financialGoals: JSON.parse(options.body) }));
+        }
+
+        if (String(url).endsWith("/exchange-rates") && !options.method) {
+          return new Response(JSON.stringify({ ok: true, exchangeRates: exchangeRatesFixture }));
+        }
+
+        if (String(url).endsWith("/exchange-rates") && options.method === "PUT") {
+          return new Response(JSON.stringify({ ok: true, exchangeRates: JSON.parse(options.body) }));
         }
 
         return new Response(JSON.stringify({ ok: true, deleted: true, id: "cash-twd-1" }));
@@ -154,7 +168,13 @@ describe("Asset Agent v0.7 data layer foundation", () => {
     await expect(dataSource.deleteAsset("cash-twd-1")).resolves.toMatchObject({ deleted: true });
     await expect(dataSource.loadFinancialGoals()).resolves.toEqual(financialGoalsFixture);
     await expect(dataSource.loadExchangeRates()).resolves.toEqual(exchangeRatesFixture);
-    expect(calls.map((call) => call.method)).toEqual(["GET", "POST", "PUT", "DELETE", "GET", "GET"]);
+    await expect(dataSource.saveFinancialGoals({ ...financialGoalsFixture, monthlyLivingExpense: 123 })).resolves.toMatchObject({
+      monthlyLivingExpense: 123,
+    });
+    await expect(dataSource.saveExchangeRates({ ...exchangeRatesFixture, fetchedAt: "2026-06-20T00:00:00.000Z" })).resolves.toMatchObject({
+      fetchedAt: "2026-06-20T00:00:00.000Z",
+    });
+    expect(calls.map((call) => call.method)).toEqual(["GET", "POST", "PUT", "DELETE", "GET", "GET", "PUT", "PUT"]);
   });
 
   it("dataSource cloud mode 的 loadAssets 永遠輸出 array", async () => {
@@ -204,6 +224,98 @@ describe("Asset Agent v0.7 data layer foundation", () => {
 
     await expect(dataSource.loadAssets()).rejects.toThrow("assets 回應格式不正確");
     expect(localStore.loadAssets()).toEqual([assetsFixture[0]]);
+  });
+
+  it("local mode goals / rates 仍走 localStore", () => {
+    const localStore = createLocalStore();
+    const dataSource = createDataSource({ localStore });
+    const nextGoals = { ...financialGoalsFixture, monthlyLivingExpense: 222000 };
+    const nextRates = { ...exchangeRatesFixture, fetchedAt: "2026-06-20T00:00:00.000Z" };
+
+    dataSource.saveFinancialGoals(nextGoals);
+    dataSource.saveExchangeRates(nextRates);
+
+    expect(localStore.loadFinancialGoals().monthlyLivingExpense).toBe(222000);
+    expect(localStore.loadExchangeRates().fetchedAt).toBe("2026-06-20T00:00:00.000Z");
+  });
+
+  it("cloud goals / rates write failure 不污染 localStore", async () => {
+    const localStore = createLocalStore();
+    localStore.saveFinancialGoals(financialGoalsFixture);
+    localStore.saveExchangeRates(exchangeRatesFixture);
+
+    const cloudStore = createCloudStore({
+      fetcher: async (url) =>
+        new Response(
+          JSON.stringify({
+            ok: false,
+            error: String(url).includes("financial-goals") ? "D1 goals write failed" : "D1 rates write failed",
+          }),
+          { status: 500 },
+        ),
+    });
+    const dataSource = createDataSource({
+      mode: DATA_SOURCE_MODES.CLOUD,
+      cloudStore,
+      localStore,
+    });
+
+    await expect(dataSource.saveFinancialGoals({ ...financialGoalsFixture, monthlyLivingExpense: 1 })).rejects.toThrow(
+      "D1 goals write failed",
+    );
+    await expect(dataSource.saveExchangeRates({ ...exchangeRatesFixture, fetchedAt: "2099-01-01T00:00:00.000Z" })).rejects.toThrow(
+      "D1 rates write failed",
+    );
+    expect(localStore.loadFinancialGoals()).toEqual(financialGoalsFixture);
+    expect(localStore.loadExchangeRates()).toEqual(exchangeRatesFixture);
+  });
+
+  it("cloud mode dashboard 使用 D1 assets + D1 goals + D1 exchangeRates 計算", async () => {
+    const cloudGoals = {
+      ...financialGoalsFixture,
+      monthlyLivingExpense: 200000,
+      emergencyMonths: 3,
+    };
+    const cloudRates = {
+      ...exchangeRatesFixture,
+      rates: {
+        ...exchangeRatesFixture.rates,
+        USD: {
+          ...exchangeRatesFixture.rates.USD,
+          rateToTwd: 40,
+        },
+      },
+    };
+    const cloudStore = createCloudStore({
+      fetcher: async (url) => {
+        if (String(url).endsWith("/assets")) {
+          return new Response(JSON.stringify({ ok: true, assets: [assetsFixture.find((asset) => asset.id === "cash-usd")] }));
+        }
+
+        if (String(url).endsWith("/financial-goals")) {
+          return new Response(JSON.stringify({ ok: true, financialGoals: cloudGoals }));
+        }
+
+        return new Response(JSON.stringify({ ok: true, exchangeRates: cloudRates }));
+      },
+    });
+    const dataSource = createDataSource({
+      mode: DATA_SOURCE_MODES.CLOUD,
+      cloudStore,
+      localStore: createLocalStore(),
+    });
+
+    const snapshot = await dataSource.loadSnapshot();
+    const twdSummary = summarizeInBaseCurrency(summarizeByCurrency(snapshot.assets), snapshot.exchangeRates);
+    const goalMetrics = getGoalMetrics({
+      assets: snapshot.assets,
+      exchangeRates: snapshot.exchangeRates,
+      financialGoals: snapshot.financialGoals,
+    });
+
+    expect(snapshot.financialGoals.monthlyLivingExpense).toBe(200000);
+    expect(twdSummary.assets).toBe(200000);
+    expect(goalMetrics.emergencyTarget).toBe(600000);
   });
 
   it("cloudStore request error 可被 UI 捕捉", async () => {

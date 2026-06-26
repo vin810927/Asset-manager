@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-06-25：v1.1 讓 Cloud Mode 寫入 financialGoals 與 exchangeRates
+
+### 決策
+Cloud Mode 下，assets、financialGoals 與 exchangeRates 都改由 Cloudflare D1 read/write 管理。`PUT /api/financial-goals` 會以已驗證 Cloudflare Access user 的 `user_id` upsert `financial_goals.goals_json`；`PUT /api/exchange-rates` 會以 replace 策略刪除同 user 舊的 `exchange_rates` rows，再插入最新一筆匯率資料。
+前端 `dataSource` 在 local mode 仍只讀寫 localStorage；在 cloud mode 只呼叫 cloudStore，不做同時寫 localStorage 與 D1。Cloud 寫入失敗時，App 不更新 UI state，並顯示「儲存失敗，資料未變更」。
+
+### 理由
+- v1.0 已能跨手機 / 電腦共用 D1 assets，但 dashboard 若沿用本機 goals / rates，跨裝置呈現會不完整
+- goals 使用 `user_id` unique upsert，可維持每位使用者一份目前設定
+- exchangeRates 採 replace 最新資料，能避免累積多筆匯率版本造成讀取語意不清；歷史匯率或 snapshots 應由後續 snapshot 機制處理
+- 不做雙寫可降低 localStorage 與 D1 分歧風險
+
+### 限制
+v1.1 仍不做自動雙向同步、background sync、offline queue、conflict resolution、agent report 或 AI 建議。手機與電腦在 Cloud Mode 下共用 D1 資料，但需要重新整理或重新讀取才會看到另一端變更。v1.2 才考慮 conflict detection、last-write-wins warning 與 changed elsewhere 提示；v1.3 以後才考慮 agent report / scheduled snapshot。
+
+---
+
 ## 2026-06-25：v1.0 採 opt-in Cloud Mode，不做自動同步
 
 ### 決策

@@ -94,21 +94,17 @@ export function createDataSource({
       return activeStore.loadExchangeRates ? activeStore.loadExchangeRates() : activeStore.getExchangeRates();
     },
     saveExchangeRates(exchangeRates) {
-      if (activeMode === DATA_SOURCE_MODES.CLOUD) {
-        throw new Error("Exchange rates are read-only in cloud mode v1.0.");
-      }
-
-      return localStore.saveExchangeRates(exchangeRates);
+      return activeStore.saveExchangeRates
+        ? activeStore.saveExchangeRates(exchangeRates)
+        : activeStore.updateExchangeRates(exchangeRates);
     },
     loadFinancialGoals() {
       return activeStore.loadFinancialGoals ? activeStore.loadFinancialGoals() : activeStore.getFinancialGoals();
     },
     saveFinancialGoals(financialGoals) {
-      if (activeMode === DATA_SOURCE_MODES.CLOUD) {
-        throw new Error("Financial goals are read-only in cloud mode v1.0.");
-      }
-
-      return localStore.saveFinancialGoals(financialGoals);
+      return activeStore.saveFinancialGoals
+        ? activeStore.saveFinancialGoals(financialGoals)
+        : activeStore.updateFinancialGoals(financialGoals);
     },
     loadSnapshot() {
       return activeStore.loadSnapshot();
