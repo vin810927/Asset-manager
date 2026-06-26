@@ -1,6 +1,13 @@
 import { createHttpError } from "./http.js";
 
 const SUPPORTED_BACKUP_SCHEMA_VERSION = 1;
+const SNAPSHOT_VERSION = "asset-agent-snapshot-v1";
+const SNAPSHOT_REASONS = new Set([
+  "manual",
+  "before_cloud_import",
+  "before_restore",
+  "before_destructive_operation",
+]);
 const ASSET_TYPES = new Set(["cash", "stock", "etf", "fund", "loan", "other"]);
 const DEFAULT_FINANCIAL_GOALS = {
   monthlyLivingExpense: 50000,
@@ -25,6 +32,11 @@ function normalizeOptionalNumber(value) {
 
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function normalizeSnapshotReason(value) {
+  const reason = normalizeOptionalText(value) || "manual";
+  return SNAPSHOT_REASONS.has(reason) ? reason : "manual";
 }
 
 function normalizeGoalNumber(value, fallback, minimum = 0) {
@@ -317,6 +329,26 @@ function exchangeRatesInsertStatement(db, userId, exchangeRates, now, createId) 
     );
 }
 
+function snapshotInsertStatement(db, userId, snapshotId, snapshotPayload, summary, now) {
+  return db
+    .prepare(
+      `INSERT INTO asset_snapshots (
+        id, user_id, snapshot_date, net_worth_twd, total_assets_twd,
+        total_liabilities_twd, payload_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      snapshotId,
+      userId,
+      snapshotPayload.createdAt,
+      summary.netWorthTwd,
+      summary.totalAssetsTwd,
+      summary.totalLiabilitiesTwd,
+      JSON.stringify(snapshotPayload),
+      now,
+    );
+}
+
 function normalizeFinancialGoalsPayload(payload) {
   const value = isPlainObject(payload?.financialGoals) ? payload.financialGoals : payload;
 
@@ -360,6 +392,133 @@ function normalizeExchangeRatesPayload(payload, now) {
   };
 }
 
+function getRateToTwd(exchangeRates, currency) {
+  if (currency === "TWD") return 1;
+  const rate = Number(exchangeRates?.rates?.[currency]?.rateToTwd);
+  return Number.isFinite(rate) && rate > 0 ? rate : 0;
+}
+
+function getAssetNativeValue(asset) {
+  if (asset.type === "loan") {
+    return Math.abs(
+      normalizeOptionalNumber(asset.principal) ??
+        normalizeOptionalNumber(asset.amountValue) ??
+        normalizeOptionalNumber(asset.amount) ??
+        0,
+    );
+  }
+
+  if (asset.type === "stock" || asset.type === "etf") {
+    const shares = normalizeOptionalNumber(asset.shares) ?? 0;
+    const price = normalizeOptionalNumber(asset.marketPrice) ?? normalizeOptionalNumber(asset.buyPrice) ?? 0;
+    return shares * price;
+  }
+
+  return normalizeOptionalNumber(asset.amountValue) ?? normalizeOptionalNumber(asset.amount) ?? 0;
+}
+
+function summarizeSnapshotPayload(payload) {
+  const assets = Array.isArray(payload?.data?.assets) ? payload.data.assets : [];
+  const exchangeRates = isPlainObject(payload?.data?.exchangeRates) ? payload.data.exchangeRates : null;
+
+  return assets.reduce(
+    (summary, asset) => {
+      const rateToTwd = getRateToTwd(exchangeRates, asset.currency);
+      const valueTwd = getAssetNativeValue(asset) * rateToTwd;
+
+      if (asset.type === "loan") {
+        summary.totalLiabilitiesTwd += valueTwd;
+      } else {
+        summary.totalAssetsTwd += valueTwd;
+      }
+
+      summary.netWorthTwd = summary.totalAssetsTwd - summary.totalLiabilitiesTwd;
+      return summary;
+    },
+    {
+      netWorthTwd: 0,
+      totalAssetsTwd: 0,
+      totalLiabilitiesTwd: 0,
+    },
+  );
+}
+
+function normalizeSnapshotOptions(body = {}) {
+  const value = isPlainObject(body) ? body : {};
+
+  return {
+    reason: normalizeSnapshotReason(value.reason),
+    label: normalizeOptionalText(value.label),
+  };
+}
+
+function assertSnapshotPayload(payload) {
+  if (!isPlainObject(payload) || payload.version !== SNAPSHOT_VERSION) {
+    throw createHttpError("Stored snapshot payload is invalid.", 500);
+  }
+
+  if (!isPlainObject(payload.data) || !Array.isArray(payload.data.assets)) {
+    throw createHttpError("Stored snapshot payload is missing assets.", 500);
+  }
+
+  return payload;
+}
+
+function mapSnapshotRowToMetadata(row) {
+  const payload = parseJsonColumn(row?.payload_json, {});
+  const metadata = isPlainObject(payload.metadata) ? payload.metadata : {};
+
+  return {
+    id: row.id,
+    reason: normalizeOptionalText(payload.reason) || "manual",
+    label: normalizeOptionalText(metadata.label),
+    assetCount: Number(metadata.assetCount ?? 0),
+    hasFinancialGoals: Boolean(metadata.hasFinancialGoals),
+    hasExchangeRates: Boolean(metadata.hasExchangeRates),
+    netWorthTwd: Number(row.net_worth_twd ?? 0),
+    totalAssetsTwd: Number(row.total_assets_twd ?? 0),
+    totalLiabilitiesTwd: Number(row.total_liabilities_twd ?? 0),
+    createdAt: payload.createdAt || row.created_at || row.snapshot_date,
+    updatedAt: row.created_at || row.snapshot_date,
+  };
+}
+
+async function getCloudSnapshotRowById(db, userId, id) {
+  return db
+    .prepare("SELECT * FROM asset_snapshots WHERE id = ? AND user_id = ? LIMIT 1")
+    .bind(id, userId)
+    .first();
+}
+
+async function buildCloudSnapshotPayload({ db, user, reason = "manual", label = null, now = new Date() } = {}) {
+  const timestamp = getNowIso(now);
+  const [assets, financialGoalsResult, exchangeRatesResult] = await Promise.all([
+    getCloudCopyAssets(db, user),
+    getCloudFinancialGoals(db, user),
+    getCloudExchangeRates(db, user),
+  ]);
+  const financialGoals = financialGoalsResult.financialGoals;
+  const exchangeRates = exchangeRatesResult.exchangeRates;
+
+  return {
+    version: SNAPSHOT_VERSION,
+    createdAt: timestamp,
+    reason: normalizeSnapshotReason(reason),
+    source: "cloudflare-d1",
+    data: {
+      assets,
+      financialGoals,
+      exchangeRates,
+    },
+    metadata: {
+      label: normalizeOptionalText(label),
+      assetCount: assets.length,
+      hasFinancialGoals: Boolean(financialGoals),
+      hasExchangeRates: Boolean(exchangeRates),
+    },
+  };
+}
+
 export async function importLocalBackupToCloudCopy({
   db,
   user,
@@ -374,6 +533,14 @@ export async function importLocalBackupToCloudCopy({
   const verifiedUser = assertVerifiedUser(user);
   const backup = validateBackupPayload(payload);
   const timestamp = getNowIso(now);
+  const beforeImportSnapshot = await createCloudSnapshot({
+    db,
+    user: verifiedUser,
+    reason: "before_cloud_import",
+    label: "Before local JSON import",
+    now,
+    createId,
+  });
   const statements = [
     profileUpsertStatement(db, verifiedUser, timestamp),
     // Replace cloud copy strategy:
@@ -406,6 +573,7 @@ export async function importLocalBackupToCloudCopy({
     cloudCopyStatus: "created",
     userEmail: verifiedUser.email,
     timestamp,
+    beforeImportSnapshotId: beforeImportSnapshot.id,
   };
 }
 
@@ -632,6 +800,174 @@ export async function updateCloudExchangeRates({
   ]);
 
   return getCloudExchangeRates(db, user);
+}
+
+export async function listCloudSnapshots(db, user) {
+  const verifiedUser = assertVerifiedUser(user);
+  const { results = [] } = await db
+    .prepare(
+      `SELECT id, snapshot_date, net_worth_twd, total_assets_twd, total_liabilities_twd, payload_json, created_at
+       FROM asset_snapshots
+       WHERE user_id = ?
+       ORDER BY snapshot_date DESC, created_at DESC, id DESC
+       LIMIT 50`,
+    )
+    .bind(verifiedUser.id)
+    .all();
+
+  return results.map(mapSnapshotRowToMetadata);
+}
+
+export async function createCloudSnapshot({
+  db,
+  user,
+  reason = "manual",
+  label = null,
+  now = new Date(),
+  createId = () => crypto.randomUUID(),
+} = {}) {
+  if (!db) {
+    throw createHttpError("Cloudflare D1 binding ASSET_AGENT_DB is not configured.", 503);
+  }
+
+  const verifiedUser = assertVerifiedUser(user);
+  const timestamp = getNowIso(now);
+  const snapshotId = createId();
+  const snapshotPayload = await buildCloudSnapshotPayload({
+    db,
+    user: verifiedUser,
+    reason,
+    label,
+    now: timestamp,
+  });
+  const summary = summarizeSnapshotPayload(snapshotPayload);
+
+  await db.batch([
+    profileUpsertStatement(db, verifiedUser, timestamp),
+    snapshotInsertStatement(db, verifiedUser.id, snapshotId, snapshotPayload, summary, timestamp),
+  ]);
+
+  const row = await getCloudSnapshotRowById(db, verifiedUser.id, snapshotId);
+  const metadata = mapSnapshotRowToMetadata(row);
+
+  return metadata;
+}
+
+export async function createCloudSnapshotFromBody({
+  db,
+  user,
+  body,
+  now = new Date(),
+  createId = () => crypto.randomUUID(),
+} = {}) {
+  const options = normalizeSnapshotOptions(body);
+  return createCloudSnapshot({
+    db,
+    user,
+    reason: options.reason,
+    label: options.label,
+    now,
+    createId,
+  });
+}
+
+export async function getCloudSnapshot(db, user, id) {
+  const verifiedUser = assertVerifiedUser(user);
+  const snapshotId = normalizeOptionalText(id);
+  const row = snapshotId ? await getCloudSnapshotRowById(db, verifiedUser.id, snapshotId) : null;
+
+  if (!row) {
+    throw createHttpError("Snapshot not found.", 404);
+  }
+
+  const snapshot = assertSnapshotPayload(parseJsonColumn(row.payload_json, null));
+
+  return {
+    metadata: mapSnapshotRowToMetadata(row),
+    snapshot,
+  };
+}
+
+export async function getCloudSnapshotRestorePreview(db, user, id) {
+  const verifiedUser = assertVerifiedUser(user);
+  const [{ snapshot }, currentAssets, currentGoals, currentRates] = await Promise.all([
+    getCloudSnapshot(db, verifiedUser, id),
+    getCloudCopyAssets(db, verifiedUser),
+    getCloudFinancialGoals(db, verifiedUser),
+    getCloudExchangeRates(db, verifiedUser),
+  ]);
+  const snapshotData = snapshot.data;
+
+  return {
+    currentAssetCount: currentAssets.length,
+    snapshotAssetCount: snapshotData.assets.length,
+    currentHasFinancialGoals: Boolean(currentGoals.financialGoals),
+    snapshotHasFinancialGoals: Boolean(snapshotData.financialGoals),
+    currentHasExchangeRates: Boolean(currentRates.exchangeRates),
+    snapshotHasExchangeRates: Boolean(snapshotData.exchangeRates),
+    restoreStrategy: "replace_cloud_data",
+    warning: "這會用 snapshot 內容取代目前 D1 cloud data。",
+  };
+}
+
+export async function restoreCloudSnapshot({
+  db,
+  user,
+  id,
+  confirm,
+  now = new Date(),
+  createId = () => crypto.randomUUID(),
+} = {}) {
+  if (!db) {
+    throw createHttpError("Cloudflare D1 binding ASSET_AGENT_DB is not configured.", 503);
+  }
+
+  if (confirm !== "RESTORE") {
+    throw createHttpError('Restore requires confirm: "RESTORE".', 400);
+  }
+
+  const verifiedUser = assertVerifiedUser(user);
+  const { snapshot } = await getCloudSnapshot(db, verifiedUser, id);
+  const beforeRestoreSnapshot = await createCloudSnapshot({
+    db,
+    user: verifiedUser,
+    reason: "before_restore",
+    label: "Before snapshot restore",
+    now,
+    createId,
+  });
+  const timestamp = getNowIso(now);
+  const snapshotData = snapshot.data;
+  const statements = [
+    profileUpsertStatement(db, verifiedUser, timestamp),
+    db
+      .prepare("UPDATE assets SET deleted_at = ?, updated_at = ? WHERE user_id = ? AND deleted_at IS NULL")
+      .bind(timestamp, timestamp, verifiedUser.id),
+    db.prepare("DELETE FROM financial_goals WHERE user_id = ?").bind(verifiedUser.id),
+    db.prepare("DELETE FROM exchange_rates WHERE user_id = ?").bind(verifiedUser.id),
+    ...snapshotData.assets.map((asset) =>
+      assetUpsertStatement(db, assetToParams(asset, verifiedUser.id, timestamp, createId)),
+    ),
+  ];
+
+  if (snapshotData.financialGoals) {
+    statements.push(financialGoalsInsertStatement(db, verifiedUser.id, snapshotData.financialGoals, timestamp, createId));
+  }
+
+  if (snapshotData.exchangeRates) {
+    statements.push(exchangeRatesInsertStatement(db, verifiedUser.id, snapshotData.exchangeRates, timestamp, createId));
+  }
+
+  await db.batch(statements);
+
+  return {
+    restoredAssetCount: snapshotData.assets.length,
+    restoredFinancialGoals: Boolean(snapshotData.financialGoals),
+    restoredExchangeRates: Boolean(snapshotData.exchangeRates),
+    beforeRestoreSnapshotId: beforeRestoreSnapshot.id,
+    restoreStrategy: "replace_cloud_data",
+    timestamp,
+  };
 }
 
 export async function getCloudCopyStatus(db, user) {

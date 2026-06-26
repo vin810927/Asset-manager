@@ -31,6 +31,10 @@ function resolveAssetsForDataSource(value) {
   return typeof value?.then === "function" ? value.then(normalizeAssetsForDataSource) : normalizeAssetsForDataSource(value);
 }
 
+function createLocalOnlySnapshotError() {
+  return new Error("D1 snapshot 只在 Cloud Mode 下可用。");
+}
+
 export function getStoredDataSourceMode() {
   try {
     const storage = getLocalStorage();
@@ -108,6 +112,32 @@ export function createDataSource({
     },
     loadSnapshot() {
       return activeStore.loadSnapshot();
+    },
+    listSnapshots() {
+      if (activeMode !== DATA_SOURCE_MODES.CLOUD) return Promise.reject(createLocalOnlySnapshotError());
+      return cloudStore.listSnapshots();
+    },
+    createSnapshot(options) {
+      if (activeMode !== DATA_SOURCE_MODES.CLOUD) return Promise.reject(createLocalOnlySnapshotError());
+      return cloudStore.createSnapshot(options);
+    },
+    getSnapshot(snapshotId) {
+      if (activeMode !== DATA_SOURCE_MODES.CLOUD) return Promise.reject(createLocalOnlySnapshotError());
+      return cloudStore.getSnapshot(snapshotId);
+    },
+    getRestorePreview(snapshotId) {
+      if (activeMode !== DATA_SOURCE_MODES.CLOUD) return Promise.reject(createLocalOnlySnapshotError());
+      return cloudStore.getRestorePreview(snapshotId);
+    },
+    async restoreSnapshot(snapshotId, options) {
+      if (activeMode !== DATA_SOURCE_MODES.CLOUD) return Promise.reject(createLocalOnlySnapshotError());
+      const result = await cloudStore.restoreSnapshot(snapshotId, options);
+      const snapshot = await cloudStore.loadSnapshot();
+
+      return {
+        result,
+        snapshot,
+      };
     },
   };
 }

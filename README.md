@@ -10,6 +10,7 @@
 - 預設仍以 `localStorage` 作為主資料源，不需後端即可使用
 - v1.0 新增 opt-in Cloud Mode；使用者明確啟用後，assets 會改以 Cloudflare D1 作為主資料源
 - v1.1 起，Cloud Mode 下 assets、financialGoals 與 exchangeRates 都會以 Cloudflare D1 read/write 管理
+- v1.2 新增 D1 snapshot / 雲端備份安全層，可手動建立、下載與 guarded restore
 - Cloud Mode 不是自動雙向同步；手機與電腦共用 D1 資料，但需要重新整理或重新讀取才會看到另一端變更
 - 支援資產類型：
   - 現金
@@ -66,6 +67,7 @@ Cloud Mode 啟用後：
 - assets：D1 read/write
 - financialGoals：D1 read/write
 - exchangeRates：D1 read/write
+- D1 snapshots：可手動建立、下載，restore 前會 preview 並要求明確確認
 - localStorage：僅作為本機 fallback / 手動備份
 - 仍不做自動雙向同步
 
@@ -77,7 +79,9 @@ Cloud Mode 啟用後：
 - D1 cloud copy 的 assets 筆數大於 0
 - 使用者已確認啟用前建議先匯出 JSON 備份，且了解 localStorage 不會自動雙向同步
 
-v1.2 才會考慮 conflict detection、last-write-wins warning 或 changed elsewhere 提示；v1.3 以後才考慮 agent report / scheduled snapshot。
+v1.2 已加入 D1 snapshot / cloud backup safety layer。Snapshot 內容包含目前 Cloud Mode 的 assets、financialGoals 與 exchangeRates；使用者可以手動建立與下載 snapshot JSON。`POST /api/import-local-backup` 在 replace D1 cloud copy 前會自動建立 `before_cloud_import` snapshot，即使目前 D1 是空資料也會建立一筆空 snapshot 作為操作紀錄。Restore 只支援從目前登入使用者自己的 D1 snapshot 還原，不支援任意 JSON restore；restore 前會先顯示 summary，要求輸入 `RESTORE`，並自動建立 `before_restore` snapshot。若 `before_restore` 建立失敗，restore 不會繼續。
+
+v1.2 仍不做 conflict detection、last-write-wins warning、changed elsewhere 提示、background sync、offline queue 或自動雙向同步；v1.3 以後才考慮 agent report / scheduled snapshot。
 
 ## 技術棧
 
@@ -302,7 +306,7 @@ v0.7 新增 `migrations/0001_cloud_sync_foundation.sql`，作為未來雲端同�
 - 已套用 migration：`0001_cloud_sync_foundation.sql`
 - 已驗證 tables：`profiles`、`assets`、`exchange_rates`、`financial_goals`、`asset_snapshots`
 
-即使 D1 已建立，目前 App 仍是 localStorage mode。`localStorage` 仍是正式資料來源，D1 尚未承接跨裝置同步。
+即使 D1 已建立，App 預設仍是 localStorage mode。只有使用者手動啟用 Cloud Mode 後，D1 才會成為主資料源。
 
 localStorage 與 D1 的對應關係：
 
@@ -311,7 +315,7 @@ localStorage 與 D1 的對應關係：
 | `assets[]` | `assets` | 逐筆資產資料，保留現有 cash / stock / ETF / fund / loan / other 欄位，並加入 `deleted_at` 供未來 soft delete / sync 使用 |
 | `exchangeRates` | `exchange_rates` | 目前匯率 store 以 `rates_json` 保存，保留 provider、fetched/source updated time |
 | `financialGoals` | `financial_goals` | 理財目標以 `goals_json` 保存，先避免頻繁 schema migration |
-| dashboard 衍生數字 | `asset_snapshots` | 未來 agent report / reminder 可使用每日 snapshot，不影響目前前端即時計算 |
+| D1 cloud backup | `asset_snapshots` | v1.2 保存完整 cloud snapshot payload，供手動下載與 guarded restore |
 | Cloudflare Access identity | `profiles` | 以已驗證的 Access JWT subject / email 建立使用者 profile |
 
 Pages Functions API skeleton：
@@ -326,10 +330,15 @@ GET    /api/financial-goals
 PUT    /api/financial-goals
 GET    /api/exchange-rates
 PUT    /api/exchange-rates
+GET    /api/snapshots
+POST   /api/snapshots
+GET    /api/snapshots/:id
+POST   /api/snapshots/:id/restore-preview
+POST   /api/snapshots/:id/restore
 POST   /api/import-local-backup
 ```
 
-v1.1 已實作：
+v1.2 已實作：
 
 ```text
 GET    /api/assets               讀取目前 verified user 的 active D1 assets
@@ -341,7 +350,12 @@ PUT    /api/financial-goals      upsert 目前 verified user 的 D1 goals_json
 GET    /api/exchange-rates       讀取目前 verified user 最新 D1 rates_json
 PUT    /api/exchange-rates       replace 目前 verified user 的最新 D1 rates_json
 GET    /api/cloud-status         回傳目前登入使用者是否已有雲端副本
-POST   /api/import-local-backup  將本機 JSON backup 建立為 D1 雲端副本
+GET    /api/snapshots            只回目前 verified user 的 snapshot metadata list
+POST   /api/snapshots            從目前 D1 cloud data 建立 snapshot
+GET    /api/snapshots/:id        讀取目前 verified user 的完整 snapshot JSON
+POST   /api/snapshots/:id/restore-preview  回傳 restore summary，不修改 D1
+POST   /api/snapshots/:id/restore          需要 confirm: "RESTORE"，restore 前建立 before_restore snapshot
+POST   /api/import-local-backup  將本機 JSON backup 建立為 D1 雲端副本，replace 前會建立 before_cloud_import snapshot
 ```
 
 仍未實作：
@@ -438,9 +452,11 @@ v0.9 的「上傳 JSON 建立雲端副本」只接受 Asset Agent JSON export，
 
 1. 前端選擇 JSON 檔後先 preview，顯示 `schemaVersion`、assets 筆數、是否包含 `financialGoals` 與 `exchangeRates`。
 2. 使用者確認後才呼叫 `POST /api/import-local-backup`。
-3. 後端只使用已驗證 Access JWT 的 `sub` / `email` 作為 user identity，不信任 body 裡的 `email`、`user_id` 或其他身份欄位。
-4. 後端會 upsert `profiles`，並將 assets、financial goals、exchange rates 寫入目前使用者的 cloud copy。
-5. 匯入採 replace cloud copy 策略：同一 user 既有 active assets 先 soft delete，再把這次 JSON backup 的 assets 寫成新的 active copy；同一 user 的 financial goals 與 exchange rates 會先刪除後重建。
+3. 後端會先建立 `before_cloud_import` snapshot；即使目前 D1 是空資料也會建立一筆空 snapshot 作為操作紀錄。
+4. 如果 snapshot 建立失敗，匯入不會繼續覆蓋 D1。
+5. 後端只使用已驗證 Access JWT 的 `sub` / `email` 作為 user identity，不信任 body 裡的 `email`、`user_id` 或其他身份欄位。
+6. 後端會 upsert `profiles`，並將 assets、financial goals、exchange rates 寫入目前使用者的 cloud copy。
+7. 匯入採 replace cloud copy 策略：同一 user 既有 active assets 先 soft delete，再把這次 JSON backup 的 assets 寫成新的 active copy；同一 user 的 financial goals 與 exchange rates 會先刪除後重建。
 
 v1.1 Cloud Mode：
 

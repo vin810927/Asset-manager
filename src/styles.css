@@ -549,6 +549,102 @@ h2 {
   font-size: 0.92rem;
 }
 
+.cloud-snapshot-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--row-border);
+  border-radius: 16px;
+  background: var(--panel-bg);
+  padding: 12px;
+}
+
+.cloud-snapshot-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cloud-snapshot-summary > div {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--row-border);
+  border-radius: 12px;
+  background: var(--row-bg);
+  padding: 8px 10px;
+}
+
+.cloud-snapshot-summary span,
+.snapshot-list-item small,
+.snapshot-confirm span {
+  color: var(--soft-text);
+  font-size: 0.76rem;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.cloud-snapshot-summary strong,
+.snapshot-list-item strong {
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 900;
+}
+
+.cloud-snapshot-list {
+  display: grid;
+  gap: 8px;
+}
+
+.snapshot-list-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--row-border);
+  border-radius: 12px;
+  background: var(--row-bg);
+  padding: 9px 10px;
+  color: var(--text);
+}
+
+.snapshot-list-item.is-selected {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.snapshot-list-item span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.snapshot-list-item span:last-child {
+  justify-items: end;
+}
+
+.restore-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--warning-border);
+  border-radius: 14px;
+  background: var(--warning-bg);
+  padding: 10px;
+}
+
+.snapshot-confirm {
+  display: grid;
+  gap: 5px;
+}
+
+.snapshot-confirm input {
+  width: 100%;
+  border: 1px solid var(--row-border);
+  border-radius: 12px;
+  background: var(--panel-bg);
+  padding: 10px 12px;
+  color: var(--text);
+  font-weight: 900;
+}
+
 .goal-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
@@ -2423,7 +2519,8 @@ select:focus {
   }
 
   .cloud-copy-panel,
-  .cloud-mode-panel {
+  .cloud-mode-panel,
+  .cloud-snapshot-panel {
     padding: 10px;
   }
 
@@ -2443,6 +2540,21 @@ select:focus {
 
   .cloud-copy-preview-grid {
     grid-template-columns: 1fr;
+  }
+
+  .cloud-snapshot-summary,
+  .snapshot-list-item {
+    grid-template-columns: 1fr;
+  }
+
+  .snapshot-list-item span:last-child {
+    justify-items: start;
+  }
+
+  .cloud-snapshot-panel .primary-button,
+  .cloud-snapshot-panel .ghost-button,
+  .cloud-snapshot-panel .danger-button {
+    width: 100%;
   }
 
   .expand-indicator {

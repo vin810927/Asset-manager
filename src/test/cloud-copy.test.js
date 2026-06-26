@@ -7,6 +7,10 @@ import { onRequestGet as onCloudStatusGet } from "../../functions/api/cloud-stat
 import { onRequestGet as onExchangeRatesGet, onRequestPut as onExchangeRatesPut } from "../../functions/api/exchange-rates.js";
 import { onRequestGet as onFinancialGoalsGet, onRequestPut as onFinancialGoalsPut } from "../../functions/api/financial-goals.js";
 import { onRequestPost as onImportLocalBackupPost } from "../../functions/api/import-local-backup.js";
+import { onRequestGet as onSnapshotGet } from "../../functions/api/snapshots/[id].js";
+import { onRequestPost as onSnapshotRestorePost } from "../../functions/api/snapshots/[id]/restore.js";
+import { onRequestPost as onSnapshotRestorePreviewPost } from "../../functions/api/snapshots/[id]/restore-preview.js";
+import { onRequestGet as onSnapshotsGet, onRequestPost as onSnapshotsPost } from "../../functions/api/snapshots/index.js";
 import { getCloudModeGateState, previewCloudBackupPayload } from "../utils.js";
 import { assetsFixture, exchangeRatesFixture, financialGoalsFixture, FIXED_NOW } from "./fixtures.js";
 
@@ -108,6 +112,8 @@ function createFakeD1() {
     assets: new Map(),
     financialGoals: new Map(),
     exchangeRates: [],
+    assetSnapshots: new Map(),
+    failSnapshotInsert: false,
   };
 
   function runStatement(sql, values) {
@@ -299,6 +305,33 @@ function createFakeD1() {
       return { success: true };
     }
 
+    if (sql.startsWith("INSERT INTO asset_snapshots")) {
+      if (state.failSnapshotInsert) throw new Error("snapshot insert failed");
+
+      const [
+        id,
+        userId,
+        snapshotDate,
+        netWorthTwd,
+        totalAssetsTwd,
+        totalLiabilitiesTwd,
+        payloadJson,
+        createdAt,
+      ] = values;
+
+      state.assetSnapshots.set(id, {
+        id,
+        user_id: userId,
+        snapshot_date: snapshotDate,
+        net_worth_twd: netWorthTwd,
+        total_assets_twd: totalAssetsTwd,
+        total_liabilities_twd: totalLiabilitiesTwd,
+        payload_json: payloadJson,
+        created_at: createdAt,
+      });
+      return { success: true };
+    }
+
     return { success: true };
   }
 
@@ -344,6 +377,12 @@ function createFakeD1() {
       );
     }
 
+    if (sql.startsWith("SELECT * FROM asset_snapshots WHERE id = ?")) {
+      const [id, userId] = values;
+      const row = state.assetSnapshots.get(id);
+      return row?.user_id === userId ? row : null;
+    }
+
     return null;
   }
 
@@ -354,6 +393,15 @@ function createFakeD1() {
         results: [...state.assets.values()]
           .filter((row) => row.user_id === userId && row.deleted_at === null)
           .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))),
+      };
+    }
+
+    if (sql.startsWith("SELECT id, snapshot_date")) {
+      const userId = values[0];
+      return {
+        results: [...state.assetSnapshots.values()]
+          .filter((row) => row.user_id === userId)
+          .sort((a, b) => String(b.snapshot_date).localeCompare(String(a.snapshot_date))),
       };
     }
 
@@ -520,6 +568,331 @@ describe("D1 cloud copy import endpoint", () => {
     expect(activeAssets[0].id).toBe(assetsFixture[0].id);
     expect(activeAssets[0].amount).toBe(12345);
     expect(deletedAssets).toHaveLength(1);
+  });
+
+  it("replace cloud copy 前會自動建立 before_cloud_import snapshot", async () => {
+    const db = createFakeD1();
+
+    await onImportLocalBackupPost({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/import-local-backup", {
+        method: "POST",
+        body: JSON.stringify(createBackupPayload()),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const response = await onImportLocalBackupPost({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/import-local-backup", {
+        method: "POST",
+        body: JSON.stringify(createBackupPayload({ assets: [assetsFixture[0]] })),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const payload = await jsonFromResponse(response);
+    const snapshots = [...db.state.assetSnapshots.values()].map((row) => JSON.parse(row.payload_json));
+
+    expect(response.status).toBe(200);
+    expect(payload.beforeImportSnapshotId).toBeTruthy();
+    expect(snapshots.some((snapshot) => snapshot.reason === "before_cloud_import")).toBe(true);
+    expect(snapshots.at(-1).data.assets).toHaveLength(2);
+  });
+
+  it("before_cloud_import snapshot 建立失敗時不會覆蓋 D1", async () => {
+    const db = createFakeD1();
+
+    await onImportLocalBackupPost({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/import-local-backup", {
+        method: "POST",
+        body: JSON.stringify(createBackupPayload()),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    db.state.failSnapshotInsert = true;
+
+    const response = await onImportLocalBackupPost({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/import-local-backup", {
+        method: "POST",
+        body: JSON.stringify(createBackupPayload({ assets: [assetsFixture[0]] })),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const activeAssets = [...db.state.assets.values()].filter((asset) => asset.deleted_at === null);
+
+    expect(response.status).toBe(500);
+    expect(activeAssets).toHaveLength(2);
+  });
+});
+
+describe("D1 cloud snapshots and guarded restore", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function importBackup(db, backup = createBackupPayload()) {
+    return onImportLocalBackupPost({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/import-local-backup", {
+        method: "POST",
+        body: JSON.stringify(backup),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+  }
+
+  async function createManualSnapshot(db, payloadOverrides = {}) {
+    const response = await onSnapshotsPost({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/snapshots", {
+        method: "POST",
+        body: JSON.stringify({
+          reason: "manual",
+          label: "Test snapshot",
+          user_id: "malicious-user",
+          email: "attacker@example.com",
+          ...payloadOverrides,
+        }),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const payload = await jsonFromResponse(response);
+    return payload.snapshot;
+  }
+
+  it("snapshot endpoints 未登入會回 401", async () => {
+    const db = createFakeD1();
+    const env = { ...ACCESS_ENV, ASSET_AGENT_DB: db };
+
+    const listResponse = await onSnapshotsGet({ request: new Request("https://asset-agent.test/api/snapshots"), env });
+    const createResponse = await onSnapshotsPost({
+      request: new Request("https://asset-agent.test/api/snapshots", { method: "POST", body: "{}" }),
+      env,
+    });
+    const getResponse = await onSnapshotGet({
+      request: new Request("https://asset-agent.test/api/snapshots/snapshot-1"),
+      env,
+      params: { id: "snapshot-1" },
+    });
+
+    expect(listResponse.status).toBe(401);
+    expect(createResponse.status).toBe(401);
+    expect(getResponse.status).toBe(401);
+  });
+
+  it("POST /api/snapshots 驗證後可建立目前 user snapshot，payload 含完整 cloud data 且不含 secrets", async () => {
+    const db = createFakeD1();
+    await importBackup(db);
+
+    const snapshot = await createManualSnapshot(db);
+    const response = await onSnapshotGet({
+      request: await createAuthenticatedRequest(`https://asset-agent.test/api/snapshots/${snapshot.id}`),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+      params: { id: snapshot.id },
+    });
+    const payload = await jsonFromResponse(response);
+    const snapshotText = JSON.stringify(payload.snapshot);
+
+    expect(snapshot).toEqual(
+      expect.objectContaining({
+        reason: "manual",
+        label: "Test snapshot",
+        assetCount: 2,
+      }),
+    );
+    expect(payload.snapshot).toEqual(
+      expect.objectContaining({
+        version: "asset-agent-snapshot-v1",
+        source: "cloudflare-d1",
+        data: expect.objectContaining({
+          assets: expect.any(Array),
+          financialGoals: expect.any(Object),
+          exchangeRates: expect.any(Object),
+        }),
+      }),
+    );
+    expect(snapshotText).not.toContain("ACCESS_AUD");
+    expect(snapshotText).not.toContain("ACCESS_TEAM_DOMAIN");
+    expect(snapshotText).not.toContain("Cf-Access-Jwt-Assertion");
+    expect(snapshotText).not.toContain("asset-agent-aud");
+  });
+
+  it("GET /api/snapshots 只回 metadata，不回完整 snapshot payload", async () => {
+    const db = createFakeD1();
+    await importBackup(db);
+    await createManualSnapshot(db);
+
+    const response = await onSnapshotsGet({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/snapshots"),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const payload = await jsonFromResponse(response);
+
+    expect(response.status).toBe(200);
+    expect(payload.snapshots).toHaveLength(2);
+    expect(payload.snapshots[0]).toEqual(
+      expect.objectContaining({
+        id: expect.any(String),
+        reason: expect.any(String),
+        assetCount: expect.any(Number),
+        createdAt: expect.any(String),
+      }),
+    );
+    expect(payload.snapshots[0].data).toBeUndefined();
+    expect(payload.snapshots[0].snapshot).toBeUndefined();
+  });
+
+  it("user A 不能讀 user B snapshot", async () => {
+    const db = createFakeD1();
+    await importBackup(db);
+    const snapshot = await createManualSnapshot(db);
+
+    const response = await onSnapshotGet({
+      request: await createAuthenticatedRequest(`https://asset-agent.test/api/snapshots/${snapshot.id}`, {
+        payloadOverrides: {
+          sub: "other-user-id",
+          email: "other@example.com",
+        },
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+      params: { id: snapshot.id },
+    });
+
+    expect(response.status).toBe(404);
+  });
+
+  it("restore-preview 不修改 D1", async () => {
+    const db = createFakeD1();
+    await importBackup(db);
+    const snapshot = await createManualSnapshot(db);
+    const snapshotCountBefore = db.state.assetSnapshots.size;
+
+    const response = await onSnapshotRestorePreviewPost({
+      request: await createAuthenticatedRequest(`https://asset-agent.test/api/snapshots/${snapshot.id}/restore-preview`, {
+        method: "POST",
+        body: "{}",
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+      params: { id: snapshot.id },
+    });
+    const payload = await jsonFromResponse(response);
+
+    expect(response.status).toBe(200);
+    expect(payload.preview).toEqual(
+      expect.objectContaining({
+        currentAssetCount: 2,
+        snapshotAssetCount: 2,
+        restoreStrategy: "replace_cloud_data",
+      }),
+    );
+    expect(db.state.assetSnapshots.size).toBe(snapshotCountBefore);
+  });
+
+  it("restore 缺少 confirm RESTORE 時回 400", async () => {
+    const db = createFakeD1();
+    await importBackup(db);
+    const snapshot = await createManualSnapshot(db);
+
+    const response = await onSnapshotRestorePost({
+      request: await createAuthenticatedRequest(`https://asset-agent.test/api/snapshots/${snapshot.id}/restore`, {
+        method: "POST",
+        body: JSON.stringify({ confirm: "NOPE" }),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+      params: { id: snapshot.id },
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("restore 前會建立 before_restore snapshot，restore 後 cloud data 與 snapshot 相符", async () => {
+    const db = createFakeD1();
+    await importBackup(db, createBackupPayload({ assets: [assetsFixture[0]] }));
+    const snapshot = await createManualSnapshot(db);
+    await importBackup(db, createBackupPayload({ assets: [assetsFixture[1], assetsFixture[2]] }));
+
+    const response = await onSnapshotRestorePost({
+      request: await createAuthenticatedRequest(`https://asset-agent.test/api/snapshots/${snapshot.id}/restore`, {
+        method: "POST",
+        body: JSON.stringify({ confirm: "RESTORE" }),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+      params: { id: snapshot.id },
+    });
+    const payload = await jsonFromResponse(response);
+    const activeAssets = [...db.state.assets.values()].filter((asset) => asset.deleted_at === null);
+    const snapshots = [...db.state.assetSnapshots.values()].map((row) => JSON.parse(row.payload_json));
+
+    expect(response.status).toBe(200);
+    expect(payload).toEqual(
+      expect.objectContaining({
+        restoredAssetCount: 1,
+        restoredFinancialGoals: true,
+        restoredExchangeRates: true,
+        beforeRestoreSnapshotId: expect.any(String),
+      }),
+    );
+    expect(snapshots.some((item) => item.reason === "before_restore")).toBe(true);
+    expect(activeAssets).toHaveLength(1);
+    expect(activeAssets[0].id).toBe(assetsFixture[0].id);
+    expect(db.state.financialGoals.has("verified-user-id")).toBe(true);
+    expect(db.state.exchangeRates.filter((row) => row.user_id === "verified-user-id")).toHaveLength(1);
+  });
+
+  it("before_restore snapshot 建立失敗時不執行 restore", async () => {
+    const db = createFakeD1();
+    await importBackup(db, createBackupPayload({ assets: [assetsFixture[0]] }));
+    const snapshot = await createManualSnapshot(db);
+    await importBackup(db, createBackupPayload({ assets: [assetsFixture[1]] }));
+    db.state.failSnapshotInsert = true;
+
+    const response = await onSnapshotRestorePost({
+      request: await createAuthenticatedRequest(`https://asset-agent.test/api/snapshots/${snapshot.id}/restore`, {
+        method: "POST",
+        body: JSON.stringify({ confirm: "RESTORE" }),
+      }),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+      params: { id: snapshot.id },
+    });
+    const activeAssets = [...db.state.assets.values()].filter((asset) => asset.deleted_at === null);
+
+    expect(response.status).toBe(500);
+    expect(activeAssets).toHaveLength(1);
+    expect(activeAssets[0].id).toBe(assetsFixture[1].id);
   });
 });
 

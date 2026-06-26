@@ -527,6 +527,18 @@ function getBackupFileName() {
   return `asset-agent-backup-${new Date().toISOString().slice(0, 10)}.json`;
 }
 
+function getSnapshotFileName(snapshot) {
+  const date = String(snapshot?.createdAt || new Date().toISOString()).slice(0, 10);
+  return `asset-agent-d1-snapshot-${date}.json`;
+}
+
+function getSnapshotReasonLabel(reason) {
+  if (reason === "before_cloud_import") return "匯入前";
+  if (reason === "before_restore") return "還原前";
+  if (reason === "before_destructive_operation") return "覆蓋前";
+  return "手動";
+}
+
 function getCloudCopyLabel(status, isCloudMode = false) {
   if (isCloudMode) return "已啟用";
   if (status?.state === "created" || status?.hasCloudCopy) return "已建立";
@@ -691,6 +703,49 @@ function App() {
   const [isLoadingCloudData, setIsLoadingCloudData] = useState(false);
   const [isSavingAsset, setIsSavingAsset] = useState(false);
   const [isSavingCloudSettings, setIsSavingCloudSettings] = useState(false);
+  const [cloudSnapshots, setCloudSnapshots] = useState([]);
+  const [selectedSnapshotId, setSelectedSnapshotId] = useState("");
+  const [snapshotRestorePreview, setSnapshotRestorePreview] = useState(null);
+  const [snapshotRestoreConfirmation, setSnapshotRestoreConfirmation] = useState("");
+  const [isLoadingSnapshots, setIsLoadingSnapshots] = useState(false);
+  const [isCreatingSnapshot, setIsCreatingSnapshot] = useState(false);
+  const [isDownloadingSnapshot, setIsDownloadingSnapshot] = useState(false);
+  const [isPreviewingRestore, setIsPreviewingRestore] = useState(false);
+  const [isRestoringSnapshot, setIsRestoringSnapshot] = useState(false);
+
+  const latestSnapshot = cloudSnapshots[0] ?? null;
+  const selectedSnapshot =
+    cloudSnapshots.find((snapshot) => snapshot.id === selectedSnapshotId) ?? latestSnapshot;
+
+  const refreshCloudSnapshots = useCallback(
+    async ({ quiet = false } = {}) => {
+      if (!isCloudMode) {
+        setCloudSnapshots([]);
+        setSelectedSnapshotId("");
+        setSnapshotRestorePreview(null);
+        setSnapshotRestoreConfirmation("");
+        return [];
+      }
+
+      setIsLoadingSnapshots(true);
+      if (!quiet) setDataToolStatus("正在讀取 D1 snapshot list...");
+
+      try {
+        const snapshots = await appDataSource.listSnapshots();
+
+        setCloudSnapshots(snapshots);
+        setSelectedSnapshotId((current) => (snapshots.some((snapshot) => snapshot.id === current) ? current : snapshots[0]?.id ?? ""));
+        if (!quiet) setDataToolStatus(`已讀取 ${snapshots.length} 筆 D1 snapshot。`);
+        return snapshots;
+      } catch (error) {
+        if (!quiet) setDataToolStatus(error.message || "讀取 D1 snapshot 失敗。");
+        return [];
+      } finally {
+        setIsLoadingSnapshots(false);
+      }
+    },
+    [appDataSource, isCloudMode],
+  );
 
   useEffect(() => {
     if (!isCloudMode) {
@@ -746,6 +801,7 @@ function App() {
           message: "Cloud Mode 已啟用，資料由 Cloudflare D1 載入。",
           lastLoadedAt: new Date().toISOString(),
         });
+        await refreshCloudSnapshots({ quiet: true });
       } catch (error) {
         if (isCancelled) return;
 
@@ -764,7 +820,16 @@ function App() {
     return () => {
       isCancelled = true;
     };
-  }, [appDataSource, isCloudMode, setAssets]);
+  }, [appDataSource, isCloudMode, refreshCloudSnapshots, setAssets]);
+
+  useEffect(() => {
+    if (!isCloudMode) {
+      setCloudSnapshots([]);
+      setSelectedSnapshotId("");
+      setSnapshotRestorePreview(null);
+      setSnapshotRestoreConfirmation("");
+    }
+  }, [isCloudMode]);
 
   const tradedHoldings = useMemo(() => groupTradedHoldings(assets), [assets]);
   const currencySummary = useMemo(() => summarizeByCurrency(assets), [assets]);
@@ -1477,6 +1542,130 @@ function App() {
       setDataToolStatus(error.message || "建立 D1 雲端副本失敗。");
     } finally {
       setIsImportingCloudBackup(false);
+    }
+  }
+
+  async function createManualCloudSnapshot() {
+    if (!isCloudMode) {
+      setDataToolStatus("D1 snapshot 只在 Cloud Mode 下可用。");
+      return;
+    }
+
+    setIsCreatingSnapshot(true);
+    setDataToolStatus("正在建立 D1 snapshot...");
+
+    try {
+      const snapshot = await appDataSource.createSnapshot({
+        reason: "manual",
+        label: "Manual cloud snapshot",
+      });
+
+      await refreshCloudSnapshots({ quiet: true });
+      setSelectedSnapshotId(snapshot.id);
+      setSnapshotRestorePreview(null);
+      setSnapshotRestoreConfirmation("");
+      setDataToolStatus(`已建立 D1 snapshot：${formatDateTime(snapshot.createdAt)}。`);
+    } catch (error) {
+      setDataToolStatus(error.message || "建立 D1 snapshot 失敗。");
+    } finally {
+      setIsCreatingSnapshot(false);
+    }
+  }
+
+  async function downloadLatestCloudSnapshot() {
+    const snapshotId = latestSnapshot?.id;
+
+    if (!snapshotId) {
+      setDataToolStatus("目前沒有可下載的 D1 snapshot。");
+      return;
+    }
+
+    setIsDownloadingSnapshot(true);
+    setDataToolStatus("正在下載最新 D1 snapshot...");
+
+    try {
+      const snapshot = await appDataSource.getSnapshot(snapshotId);
+
+      downloadTextFile(JSON.stringify(snapshot, null, 2), getSnapshotFileName(snapshot), "application/json");
+      setDataToolStatus("已下載最新 D1 snapshot JSON。");
+    } catch (error) {
+      setDataToolStatus(error.message || "下載 D1 snapshot 失敗。");
+    } finally {
+      setIsDownloadingSnapshot(false);
+    }
+  }
+
+  async function previewCloudSnapshotRestore(snapshotId = selectedSnapshot?.id) {
+    if (!snapshotId) {
+      setDataToolStatus("請先選擇要還原的 D1 snapshot。");
+      return;
+    }
+
+    setIsPreviewingRestore(true);
+    setSnapshotRestorePreview(null);
+    setSnapshotRestoreConfirmation("");
+    setDataToolStatus("正在產生 restore preview...");
+
+    try {
+      const preview = await appDataSource.getRestorePreview(snapshotId);
+
+      setSelectedSnapshotId(snapshotId);
+      setSnapshotRestorePreview(preview);
+      setDataToolStatus("Restore preview 已產生；確認後才可執行還原。");
+    } catch (error) {
+      setDataToolStatus(error.message || "Restore preview 失敗。");
+    } finally {
+      setIsPreviewingRestore(false);
+    }
+  }
+
+  async function restoreCloudSnapshot() {
+    const snapshotId = selectedSnapshot?.id;
+
+    if (!snapshotId) {
+      setDataToolStatus("請先選擇要還原的 D1 snapshot。");
+      return;
+    }
+
+    if (!snapshotRestorePreview) {
+      setDataToolStatus("請先查看 restore preview。");
+      return;
+    }
+
+    if (snapshotRestoreConfirmation !== "RESTORE") {
+      setDataToolStatus("請輸入 RESTORE 以確認覆蓋目前 D1 cloud data。");
+      return;
+    }
+
+    setIsRestoringSnapshot(true);
+    setDataToolStatus("正在還原 D1 snapshot；系統會先建立 before_restore snapshot...");
+
+    try {
+      const { result, snapshot } = await appDataSource.restoreSnapshot(snapshotId, {
+        confirm: snapshotRestoreConfirmation,
+      });
+
+      setAssets(snapshot.assets);
+      setExchangeRates(snapshot.exchangeRates);
+      setFinancialGoals(snapshot.financialGoals);
+      setExpandedAssetGroups({});
+      setSelectedOverviewKey(null);
+      resetAssetFilters();
+      cancelEditing();
+      cancelDeleteAsset();
+      await refreshCloudSnapshots({ quiet: true });
+      setSnapshotRestorePreview(null);
+      setSnapshotRestoreConfirmation("");
+      setCloudModeStatus({
+        state: "ready",
+        message: `D1 snapshot 已還原：${result.restoredAssetCount} 筆 assets。`,
+        lastLoadedAt: new Date().toISOString(),
+      });
+      setDataToolStatus(`D1 snapshot 已還原；before_restore snapshot：${result.beforeRestoreSnapshotId}。`);
+    } catch (error) {
+      setDataToolStatus(error.message || "D1 snapshot 還原失敗。");
+    } finally {
+      setIsRestoringSnapshot(false);
     }
   }
 
@@ -2344,6 +2533,144 @@ function App() {
                 </div>
               )}
             </div>
+
+            {isCloudMode && (
+              <div className="cloud-snapshot-panel" aria-label="D1 快照與雲端備份">
+                <div className="cloud-copy-header">
+                  <div>
+                    <strong>D1 快照 / 雲端備份</strong>
+                    <small>
+                      Snapshot 是 D1 當下資料備份；restore 會用 snapshot 取代目前 D1 cloud data，且不是自動同步。
+                    </small>
+                  </div>
+                  <button
+                    className="ghost-button secondary-action"
+                    type="button"
+                    onClick={() => refreshCloudSnapshots()}
+                    disabled={isLoadingSnapshots}
+                  >
+                    {isLoadingSnapshots ? "讀取中" : "刷新快照"}
+                  </button>
+                </div>
+
+                <div className="cloud-snapshot-summary">
+                  <div>
+                    <span>snapshot 數量</span>
+                    <strong>{cloudSnapshots.length}</strong>
+                  </div>
+                  <div>
+                    <span>最近一次</span>
+                    <strong>{latestSnapshot ? formatDateTime(latestSnapshot.createdAt) : "尚無 snapshot"}</strong>
+                  </div>
+                </div>
+
+                <div className="backup-actions">
+                  <button
+                    className="primary-button primary-action"
+                    type="button"
+                    onClick={createManualCloudSnapshot}
+                    disabled={isCreatingSnapshot}
+                  >
+                    {isCreatingSnapshot ? "建立中" : "建立 snapshot"}
+                  </button>
+                  <button
+                    className="ghost-button secondary-action"
+                    type="button"
+                    onClick={downloadLatestCloudSnapshot}
+                    disabled={!latestSnapshot || isDownloadingSnapshot}
+                  >
+                    {isDownloadingSnapshot ? "下載中" : "下載最新 snapshot JSON"}
+                  </button>
+                </div>
+
+                {cloudSnapshots.length > 0 ? (
+                  <div className="cloud-snapshot-list">
+                    {cloudSnapshots.slice(0, 5).map((snapshot) => (
+                      <button
+                        className={`snapshot-list-item card-button${selectedSnapshot?.id === snapshot.id ? " is-selected" : ""}`}
+                        type="button"
+                        key={snapshot.id}
+                        onClick={() => {
+                          setSelectedSnapshotId(snapshot.id);
+                          setSnapshotRestorePreview(null);
+                          setSnapshotRestoreConfirmation("");
+                        }}
+                      >
+                        <span>
+                          <strong>{getSnapshotReasonLabel(snapshot.reason)}</strong>
+                          <small>{snapshot.label || formatDateTime(snapshot.createdAt)}</small>
+                        </span>
+                        <span>
+                          <strong>{snapshot.assetCount} 筆</strong>
+                          <small>{formatDateTime(snapshot.createdAt)}</small>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="cloud-copy-note">尚無 D1 snapshot。可先手動建立一筆，作為目前 cloud data 備份。</p>
+                )}
+
+                {selectedSnapshot && (
+                  <div className="restore-panel">
+                    <div className="cloud-copy-header">
+                      <div>
+                        <strong>Restore preview</strong>
+                        <small>
+                          選取：{getSnapshotReasonLabel(selectedSnapshot.reason)} · {formatDateTime(selectedSnapshot.createdAt)}
+                        </small>
+                      </div>
+                      <button
+                        className="ghost-button secondary-action"
+                        type="button"
+                        onClick={() => previewCloudSnapshotRestore(selectedSnapshot.id)}
+                        disabled={isPreviewingRestore}
+                      >
+                        {isPreviewingRestore ? "產生中" : "查看 preview"}
+                      </button>
+                    </div>
+
+                    {snapshotRestorePreview && (
+                      <>
+                        <div className="cloud-copy-preview-grid">
+                          <div>
+                            <span>目前 assets</span>
+                            <strong>{snapshotRestorePreview.currentAssetCount} 筆</strong>
+                          </div>
+                          <div>
+                            <span>snapshot assets</span>
+                            <strong>{snapshotRestorePreview.snapshotAssetCount} 筆</strong>
+                          </div>
+                          <div>
+                            <span>策略</span>
+                            <strong>replace</strong>
+                          </div>
+                        </div>
+                        <p className="cloud-copy-note">
+                          {snapshotRestorePreview.warning} Restore 前會自動建立 before_restore snapshot。
+                        </p>
+                        <label className="snapshot-confirm">
+                          <span>輸入 RESTORE 以確認覆蓋目前 D1 cloud data</span>
+                          <input
+                            value={snapshotRestoreConfirmation}
+                            onChange={(event) => setSnapshotRestoreConfirmation(event.target.value)}
+                            placeholder="RESTORE"
+                          />
+                        </label>
+                        <button
+                          className="danger-button secondary-action"
+                          type="button"
+                          onClick={restoreCloudSnapshot}
+                          disabled={isRestoringSnapshot || snapshotRestoreConfirmation !== "RESTORE"}
+                        >
+                          {isRestoringSnapshot ? "還原中" : "確認還原 snapshot"}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="goal-grid" aria-label="理財目標設定">
               <label>

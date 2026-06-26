@@ -1,5 +1,23 @@
 # Decisions
 
+## 2026-06-26：v1.2 新增 D1 snapshot 與 guarded restore
+
+### 決策
+v1.2 使用既有 `asset_snapshots` table，不新增 migration。`payload_json` 保存完整 snapshot payload，包含 `version`、`createdAt`、`reason`、`source`、`data.assets`、`data.financialGoals`、`data.exchangeRates` 與 metadata；`reason` / `label` 也放在 payload metadata 內，list API 從 `payload_json` 解析 metadata，不需要新增欄位。
+
+新增 snapshot API：`GET /api/snapshots` 只回 metadata；`POST /api/snapshots` 從目前 verified user 的 D1 cloud data 建立 snapshot；`GET /api/snapshots/:id` 只允許讀自己的完整 snapshot；restore preview 不修改 D1；restore 必須收到 `confirm: "RESTORE"`，且 restore 前會先建立 `before_restore` snapshot。`POST /api/import-local-backup` 在 replace cloud copy 前會先建立 `before_cloud_import` snapshot，即使目前 D1 是空資料也建立空 snapshot 作為操作紀錄；若 snapshot 建立失敗，匯入不繼續。
+
+### 理由
+- 既有 schema 的 `payload_json` 已足夠保存完整 cloud backup，不需要為 reason / label 先做 schema migration
+- restore 是覆蓋性操作，必須先 preview、明確確認，並自動建立可回退的 before_restore snapshot
+- import-local-backup 也是 replace 操作，因此覆蓋前先建立 snapshot 可以降低 production 操作風險
+- Snapshot 只從 D1 current data 產生，不接受任意 JSON restore，可避免不受信任檔案直接覆蓋 cloud data
+
+### 限制
+v1.2 仍不做自動雙向同步、background sync、offline queue、conflict resolution、agent report、AI 建議或 scheduled snapshot。localStorage 仍是 local mode / fallback；restore 成功後只重新載入 cloud data，不寫入 localStorage。
+
+---
+
 ## 2026-06-25：v1.1 讓 Cloud Mode 寫入 financialGoals 與 exchangeRates
 
 ### 決策

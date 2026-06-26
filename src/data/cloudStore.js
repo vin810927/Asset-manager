@@ -6,6 +6,14 @@ function createCloudStoreError(message) {
   return new Error(`Cloud data source is not configured: ${message}`);
 }
 
+function assertPlainSnapshotPayload(payload, label) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error(`${label} 回應格式不正確。`);
+  }
+
+  return payload;
+}
+
 async function parseJsonResponse(response) {
   const payload = await response.json().catch(() => null);
 
@@ -137,6 +145,50 @@ export function createCloudStore({ apiBaseUrl = DEFAULT_API_BASE_URL, fetcher = 
         method: "POST",
         body: JSON.stringify(backupPayload),
       });
+    },
+    async listSnapshots() {
+      const payload = await request("/snapshots");
+
+      if (!Array.isArray(payload.snapshots)) {
+        throw new Error("D1 snapshot list 回應格式不正確。");
+      }
+
+      return payload.snapshots;
+    },
+    async createSnapshot({ reason = "manual", label = "" } = {}) {
+      const payload = await request("/snapshots", {
+        method: "POST",
+        body: JSON.stringify({ reason, label }),
+      });
+
+      return assertPlainSnapshotPayload(payload.snapshot, "D1 snapshot");
+    },
+    async getSnapshot(snapshotId) {
+      const payload = await request(`/snapshots/${encodeURIComponent(snapshotId)}`);
+
+      return assertPlainSnapshotPayload(payload.snapshot, "D1 snapshot");
+    },
+    async getRestorePreview(snapshotId) {
+      const payload = await request(`/snapshots/${encodeURIComponent(snapshotId)}/restore-preview`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+
+      return assertPlainSnapshotPayload(payload.preview, "D1 restore preview");
+    },
+    async restoreSnapshot(snapshotId, { confirm } = {}) {
+      const payload = await request(`/snapshots/${encodeURIComponent(snapshotId)}/restore`, {
+        method: "POST",
+        body: JSON.stringify({ confirm }),
+      });
+
+      const result = assertPlainSnapshotPayload(payload, "D1 restore");
+
+      if (!Number.isFinite(Number(result.restoredAssetCount)) || !result.beforeRestoreSnapshotId) {
+        throw new Error("D1 restore 回應格式不正確。");
+      }
+
+      return result;
     },
     async loadSnapshot() {
       const [assets, financialGoals, exchangeRates] = await Promise.all([

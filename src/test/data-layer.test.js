@@ -318,6 +318,149 @@ describe("Asset Agent v0.7 data layer foundation", () => {
     expect(goalMetrics.emergencyTarget).toBe(600000);
   });
 
+  it("cloudStore 支援 snapshot list / create / get / preview / restore", async () => {
+    const calls = [];
+    const cloudStore = createCloudStore({
+      fetcher: async (url, options = {}) => {
+        calls.push({ url: String(url), method: options.method ?? "GET", body: options.body });
+
+        if (String(url).endsWith("/snapshots") && !options.method) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              snapshots: [{ id: "snapshot-1", reason: "manual", assetCount: 1, createdAt: "2026-06-25T00:00:00.000Z" }],
+            }),
+          );
+        }
+
+        if (String(url).endsWith("/snapshots") && options.method === "POST") {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              snapshot: { id: "snapshot-2", reason: "manual", assetCount: 1, createdAt: "2026-06-25T00:01:00.000Z" },
+            }),
+            { status: 201 },
+          );
+        }
+
+        if (String(url).endsWith("/restore-preview")) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              preview: {
+                currentAssetCount: 2,
+                snapshotAssetCount: 1,
+                restoreStrategy: "replace_cloud_data",
+              },
+            }),
+          );
+        }
+
+        if (String(url).endsWith("/restore")) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              restoredAssetCount: 1,
+              beforeRestoreSnapshotId: "before-restore-1",
+            }),
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            snapshot: {
+              version: "asset-agent-snapshot-v1",
+              createdAt: "2026-06-25T00:00:00.000Z",
+              data: { assets: [assetsFixture[0]], financialGoals: financialGoalsFixture, exchangeRates: exchangeRatesFixture },
+            },
+          }),
+        );
+      },
+    });
+
+    await expect(cloudStore.listSnapshots()).resolves.toHaveLength(1);
+    await expect(cloudStore.createSnapshot({ reason: "manual" })).resolves.toMatchObject({ id: "snapshot-2" });
+    await expect(cloudStore.getSnapshot("snapshot-1")).resolves.toMatchObject({ version: "asset-agent-snapshot-v1" });
+    await expect(cloudStore.getRestorePreview("snapshot-1")).resolves.toMatchObject({
+      restoreStrategy: "replace_cloud_data",
+    });
+    await expect(cloudStore.restoreSnapshot("snapshot-1", { confirm: "RESTORE" })).resolves.toMatchObject({
+      restoredAssetCount: 1,
+    });
+    expect(calls.map((call) => call.method)).toEqual(["GET", "POST", "GET", "POST", "POST"]);
+  });
+
+  it("snapshot API malformed response 會丟出可讀錯誤", async () => {
+    const cloudStore = createCloudStore({
+      fetcher: async (url) => {
+        if (String(url).endsWith("/snapshots")) {
+          return new Response(JSON.stringify({ ok: true, items: [] }));
+        }
+
+        return new Response(JSON.stringify({ ok: true, restored: true }));
+      },
+    });
+
+    await expect(cloudStore.listSnapshots()).rejects.toThrow("snapshot list 回應格式不正確");
+    await expect(cloudStore.restoreSnapshot("snapshot-1", { confirm: "RESTORE" })).rejects.toThrow(
+      "D1 restore 回應格式不正確",
+    );
+  });
+
+  it("local mode 不會呼叫 cloud snapshot / restore API", async () => {
+    const cloudCalls = [];
+    const dataSource = createDataSource({
+      mode: DATA_SOURCE_MODES.LOCAL,
+      localStore: createLocalStore(),
+      cloudStore: {
+        listSnapshots: () => {
+          cloudCalls.push("listSnapshots");
+        },
+      },
+    });
+
+    await expect(dataSource.listSnapshots()).rejects.toThrow("D1 snapshot 只在 Cloud Mode 下可用");
+    expect(cloudCalls).toEqual([]);
+  });
+
+  it("cloud mode restore 成功後會重新載入 cloud data，且不污染 localStorage", async () => {
+    const localStore = createLocalStore();
+    localStore.saveAssets([assetsFixture[0]]);
+    const cloudStore = createCloudStore({
+      fetcher: async (url, options = {}) => {
+        if (String(url).endsWith("/restore")) {
+          return new Response(JSON.stringify({ ok: true, restoredAssetCount: 1, beforeRestoreSnapshotId: "before-1" }));
+        }
+
+        if (String(url).endsWith("/assets")) {
+          return new Response(JSON.stringify({ ok: true, assets: [assetsFixture[1]] }));
+        }
+
+        if (String(url).endsWith("/financial-goals")) {
+          return new Response(JSON.stringify({ ok: true, financialGoals: financialGoalsFixture }));
+        }
+
+        if (String(url).endsWith("/exchange-rates")) {
+          return new Response(JSON.stringify({ ok: true, exchangeRates: exchangeRatesFixture }));
+        }
+
+        return new Response(JSON.stringify({ ok: true, snapshot: {}, method: options.method }));
+      },
+    });
+    const dataSource = createDataSource({
+      mode: DATA_SOURCE_MODES.CLOUD,
+      localStore,
+      cloudStore,
+    });
+
+    const restored = await dataSource.restoreSnapshot("snapshot-1", { confirm: "RESTORE" });
+
+    expect(restored.result.restoredAssetCount).toBe(1);
+    expect(restored.snapshot.assets).toEqual([assetsFixture[1]]);
+    expect(localStore.loadAssets()).toEqual([assetsFixture[0]]);
+  });
+
   it("cloudStore request error 可被 UI 捕捉", async () => {
     const cloudStore = createCloudStore({
       fetcher: async () => new Response(JSON.stringify({ ok: false, error: "Access token expired" }), { status: 401 }),

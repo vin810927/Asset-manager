@@ -2,9 +2,9 @@
 
 ## 近期優先
 
-- [ ] v1.2：設計雲端同步衝突偵測、last-write-wins warning 與 rollback 策略
+- [ ] v1.2 後續：設計雲端同步衝突偵測、last-write-wins warning 與 rollback 策略
 - [ ] v1.3：建立 scheduled snapshot 與 agent report foundation
-- [ ] 新增 cloud copy 與本機資料的人工比對 / 還原流程
+- [ ] 新增 cloud copy 與本機資料的人工比對流程
 - [ ] 改善 CSV preview 的欄位對照與錯誤定位
 - [ ] 新增基金類型的專屬欄位
 - [ ] 補 asset validation 的 component / e2e 測試
@@ -86,3 +86,7 @@
 - [x] v1.0：實作 D1 assets CRUD，並維持 localStorage 為預設資料源
 - [x] v1.0：financialGoals / exchangeRates 在 Cloud Mode 下從 D1 read-only 載入
 - [x] v1.1：financialGoals / exchangeRates 在 Cloud Mode 下支援 D1 read/write
+- [x] v1.2：新增 D1 snapshot / cloud backup safety layer
+- [x] v1.2：snapshot 支援手動建立、metadata list、完整 JSON 下載與 restore preview
+- [x] v1.2：restore 前需輸入 RESTORE，且會自動建立 before_restore snapshot
+- [x] v1.2：import-local-backup replace 前會自動建立 before_cloud_import snapshot
