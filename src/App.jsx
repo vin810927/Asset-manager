@@ -40,7 +40,14 @@ import {
   toNumber,
   validateAssetInput,
 } from "./utils.js";
-import { DATA_SOURCE_MODES, createDataSource, getDefaultDataSourceMode, setStoredDataSourceMode } from "./data/dataSource.js";
+import {
+  DATA_SOURCE_MODES,
+  STALE_CLOUD_DATA_ERROR_CODE,
+  STALE_CLOUD_DATA_MESSAGE,
+  createDataSource,
+  getDefaultDataSourceMode,
+  setStoredDataSourceMode,
+} from "./data/dataSource.js";
 
 function getTodayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -562,6 +569,10 @@ function getCloudCopyDescription(status, isCloudMode = false) {
   return "可上傳 JSON 備份建立 D1 雲端副本，這不是同步。";
 }
 
+function isStaleCloudDataError(error) {
+  return error?.code === STALE_CLOUD_DATA_ERROR_CODE || error?.message === STALE_CLOUD_DATA_MESSAGE;
+}
+
 function downloadTextFile(content, fileName, mimeType) {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -770,13 +781,12 @@ function App() {
     }
   }, [appDataSource, financialGoals, isCloudMode]);
 
-  useEffect(() => {
-    if (!isCloudMode) return undefined;
+  const loadCloudData = useCallback(
+    async ({ quiet = false, isCancelled = () => false } = {}) => {
+      if (!isCloudMode) return null;
 
-    let isCancelled = false;
-
-    async function loadCloudData() {
       setIsLoadingCloudData(true);
+      if (!quiet) setDataToolStatus("正在重新整理 Cloudflare D1 資料...");
       setCloudModeStatus((current) => ({
         ...current,
         state: "loading",
@@ -786,7 +796,7 @@ function App() {
       try {
         const snapshot = await appDataSource.loadSnapshot();
 
-        if (isCancelled) return;
+        if (isCancelled()) return null;
 
         setAssets(snapshot.assets);
         setExchangeRates(snapshot.exchangeRates);
@@ -798,29 +808,41 @@ function App() {
         cancelDeleteAsset();
         setCloudModeStatus({
           state: "ready",
-          message: "Cloud Mode 已啟用，資料由 Cloudflare D1 載入。",
+          message: "Cloud Mode 已啟用，資料由 Cloudflare D1 載入；儲存前會檢查是否有其他裝置更新。",
           lastLoadedAt: new Date().toISOString(),
+          code: null,
         });
         await refreshCloudSnapshots({ quiet: true });
+        if (!quiet) setDataToolStatus("已重新整理 Cloudflare D1 資料。");
+        return snapshot;
       } catch (error) {
-        if (isCancelled) return;
+        if (isCancelled()) return null;
 
         setCloudModeStatus({
           state: "error",
           message: error.message || "Cloud Mode 載入失敗，可切回本機模式。",
           lastLoadedAt: null,
+          code: null,
         });
+        if (!quiet) setDataToolStatus(error.message || "Cloud Mode 載入失敗。");
+        return null;
       } finally {
-        if (!isCancelled) setIsLoadingCloudData(false);
+        if (!isCancelled()) setIsLoadingCloudData(false);
       }
-    }
+    },
+    [appDataSource, isCloudMode, refreshCloudSnapshots, setAssets],
+  );
 
-    loadCloudData();
+  useEffect(() => {
+    if (!isCloudMode) return undefined;
+
+    let isCancelled = false;
+    loadCloudData({ quiet: true, isCancelled: () => isCancelled });
 
     return () => {
       isCancelled = true;
     };
-  }, [appDataSource, isCloudMode, refreshCloudSnapshots, setAssets]);
+  }, [isCloudMode, loadCloudData]);
 
   useEffect(() => {
     if (!isCloudMode) {
@@ -1199,6 +1221,20 @@ function App() {
     setEditFormNotice("");
   }
 
+  function handleCloudWriteError(error, fallbackMessage = "發生未知錯誤。") {
+    if (isStaleCloudDataError(error)) {
+      setCloudModeStatus((current) => ({
+        ...current,
+        state: "error",
+        code: STALE_CLOUD_DATA_ERROR_CODE,
+        message: STALE_CLOUD_DATA_MESSAGE,
+      }));
+      return STALE_CLOUD_DATA_MESSAGE;
+    }
+
+    return error?.message || fallbackMessage;
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
 
@@ -1221,7 +1257,7 @@ function App() {
       resetForm(form.type);
       setIsAssetFormOpen(false);
     } catch (error) {
-      setAddFormNotice(error.message ? `儲存失敗，資料未變更：${error.message}` : "儲存失敗，資料未變更。");
+      setAddFormNotice(`儲存失敗，資料未變更：${handleCloudWriteError(error)}`);
     } finally {
       setIsSavingAsset(false);
     }
@@ -1254,7 +1290,7 @@ function App() {
       setAssets((current) => current.map((item) => (item.id === editingAsset.id ? savedAsset : item)));
       cancelEditing();
     } catch (error) {
-      setEditFormNotice(error.message ? `儲存失敗，資料未變更：${error.message}` : "儲存失敗，資料未變更。");
+      setEditFormNotice(`儲存失敗，資料未變更：${handleCloudWriteError(error)}`);
     } finally {
       setIsSavingAsset(false);
     }
@@ -1290,7 +1326,7 @@ function App() {
 
       cancelDeleteAsset();
     } catch (error) {
-      setDataToolStatus(error.message ? `刪除失敗，資料未變更：${error.message}` : "刪除失敗，資料未變更。");
+      setDataToolStatus(`刪除失敗，資料未變更：${handleCloudWriteError(error, "刪除失敗，資料未變更。")}`);
     } finally {
       setIsSavingAsset(false);
     }
@@ -1348,7 +1384,7 @@ function App() {
     } catch (error) {
       setExchangeRateStatus(
         isCloudMode && latestRates
-          ? `儲存失敗，資料未變更：${error.message || "D1 匯率寫入失敗。"}`
+          ? `儲存失敗，資料未變更：${handleCloudWriteError(error, "D1 匯率寫入失敗。")}`
           : error.message || "匯率更新失敗，請稍後再試。",
       );
     } finally {
@@ -1376,7 +1412,7 @@ function App() {
       setExchangeRates(savedRates);
       setExchangeRateStatus(isCloudMode ? `${currency} 匯率已手動更新並儲存到 D1。` : `${currency} 匯率已手動更新。`);
     } catch (error) {
-      setExchangeRateStatus(`儲存失敗，資料未變更：${error.message || "D1 匯率寫入失敗。"}`);
+      setExchangeRateStatus(`儲存失敗，資料未變更：${handleCloudWriteError(error, "D1 匯率寫入失敗。")}`);
     } finally {
       setIsSavingCloudSettings(false);
     }
@@ -1401,7 +1437,7 @@ function App() {
       setFinancialGoals(savedGoals);
       setDataToolStatus("理財目標已儲存到 D1。");
     } catch (error) {
-      setDataToolStatus(`儲存失敗，資料未變更：${error.message || "D1 理財目標寫入失敗。"}`);
+      setDataToolStatus(`儲存失敗，資料未變更：${handleCloudWriteError(error, "D1 理財目標寫入失敗。")}`);
     } finally {
       setIsSavingCloudSettings(false);
     }
@@ -1522,7 +1558,7 @@ function App() {
     setDataToolStatus("正在建立 D1 雲端副本...");
 
     try {
-      const result = await appDataSource.cloudStore.importLocalBackup(cloudBackupPreview.payload);
+      const result = await appDataSource.importLocalBackup(cloudBackupPreview.payload);
 
       setCloudBackupPreview(null);
       setCloudCopyStatus({
@@ -1539,7 +1575,7 @@ function App() {
         `已建立雲端副本：${result.imported?.assets ?? 0} 筆資產。App 仍使用本機 localStorage。`,
       );
     } catch (error) {
-      setDataToolStatus(error.message || "建立 D1 雲端副本失敗。");
+      setDataToolStatus(handleCloudWriteError(error, "建立 D1 雲端副本失敗。"));
     } finally {
       setIsImportingCloudBackup(false);
     }
@@ -1663,7 +1699,7 @@ function App() {
       });
       setDataToolStatus(`D1 snapshot 已還原；before_restore snapshot：${result.beforeRestoreSnapshotId}。`);
     } catch (error) {
-      setDataToolStatus(error.message || "D1 snapshot 還原失敗。");
+      setDataToolStatus(handleCloudWriteError(error, "D1 snapshot 還原失敗。"));
     } finally {
       setIsRestoringSnapshot(false);
     }
@@ -1702,6 +1738,7 @@ function App() {
       state: "idle",
       message: "已切回本機瀏覽器 localStorage。",
       lastLoadedAt: null,
+      code: null,
     });
     setDataToolStatus("已切回本機模式；D1 雲端資料不會自動同步回 localStorage。");
   }
@@ -2391,7 +2428,7 @@ function App() {
                   <strong>{isCloudMode ? "Cloud Mode 已啟用" : "啟用 Cloud Mode"}</strong>
                   <small>
                     {isCloudMode
-                      ? "目前 assets / financialGoals / exchangeRates 會寫入 Cloudflare D1；localStorage 不會自動雙向同步。"
+                      ? "目前 assets / financialGoals / exchangeRates 會寫入 Cloudflare D1；儲存前會檢查是否有其他裝置更新。"
                       : "啟用前必須已有 D1 雲端副本，並建議先匯出 JSON 備份。"}
                   </small>
                 </div>
@@ -2415,8 +2452,20 @@ function App() {
                 <div className={`cloud-mode-note is-${cloudModeStatus.state}`}>
                   <strong>{cloudModeStatus.state === "error" ? "Cloud error" : "Cloudflare D1 雲端資料"}</strong>
                   <small>{cloudModeStatus.message || "Cloud Mode 使用 D1 作為主資料源。"}</small>
-                  <small>assets / financialGoals / exchangeRates 皆為 D1 read/write；仍不做自動雙向同步。</small>
+                  <small>
+                    assets / financialGoals / exchangeRates 皆為 D1 read/write；儲存前做 stale check，仍不做自動雙向同步。
+                  </small>
                   {isLoadingCloudData && <small>正在載入 D1 資料...</small>}
+                  {cloudModeStatus.code === STALE_CLOUD_DATA_ERROR_CODE && (
+                    <button
+                      className="ghost-button secondary-action"
+                      type="button"
+                      onClick={() => loadCloudData({ quiet: false })}
+                      disabled={isLoadingCloudData}
+                    >
+                      重新整理雲端資料
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="cloud-mode-checklist">
@@ -2740,7 +2789,7 @@ function App() {
             </div>
             {isCloudMode && (
               <p className="cloud-copy-note">
-                Cloud Mode v1.1 的 assets、理財目標與匯率皆由 D1 read/write 管理；localStorage
+                Cloud Mode 的 assets、理財目標與匯率皆由 D1 read/write 管理；儲存前會檢查雲端資料是否已被其他裝置更新。localStorage
                 僅作為本機 fallback / 手動備份，仍不做自動雙向同步。
               </p>
             )}

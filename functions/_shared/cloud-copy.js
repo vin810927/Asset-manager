@@ -778,6 +778,42 @@ export async function getCloudExchangeRates(db, user) {
   };
 }
 
+export async function getCloudRevision(db, user) {
+  const verifiedUser = assertVerifiedUser(user);
+  const [assetsRow, financialGoalsRow, exchangeRatesRow] = await Promise.all([
+    db
+      .prepare("SELECT MAX(updated_at) AS assetsUpdatedAt FROM assets WHERE user_id = ?")
+      .bind(verifiedUser.id)
+      .first(),
+    db
+      .prepare("SELECT MAX(updated_at) AS financialGoalsUpdatedAt FROM financial_goals WHERE user_id = ?")
+      .bind(verifiedUser.id)
+      .first(),
+    db
+      .prepare(
+        "SELECT MAX(COALESCE(updated_at, fetched_at, created_at)) AS exchangeRatesUpdatedAt FROM exchange_rates WHERE user_id = ?",
+      )
+      .bind(verifiedUser.id)
+      .first(),
+  ]);
+  const revision = {
+    assetsUpdatedAt: assetsRow?.assetsUpdatedAt ?? null,
+    financialGoalsUpdatedAt: financialGoalsRow?.financialGoalsUpdatedAt ?? null,
+    exchangeRatesUpdatedAt: exchangeRatesRow?.exchangeRatesUpdatedAt ?? null,
+  };
+
+  revision.cloudUpdatedAt =
+    [revision.assetsUpdatedAt, revision.financialGoalsUpdatedAt, revision.exchangeRatesUpdatedAt]
+      .filter(Boolean)
+      .sort()
+      .at(-1) ?? null;
+
+  return {
+    ok: true,
+    revision,
+  };
+}
+
 export async function updateCloudExchangeRates({
   db,
   user,

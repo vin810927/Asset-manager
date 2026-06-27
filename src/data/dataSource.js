@@ -12,6 +12,8 @@ export const CLOUD_SYNC_STATUS = {
   label: "Cloudflare D1 雲端同步",
   description: "opt-in；啟用後以 D1 作為主資料源，但不做自動雙向同步。",
 };
+export const STALE_CLOUD_DATA_ERROR_CODE = "STALE_CLOUD_DATA";
+export const STALE_CLOUD_DATA_MESSAGE = "雲端資料已在其他裝置或頁面更新。為避免覆蓋新資料，請重新整理後再修改。";
 
 function getLocalStorage() {
   return globalThis.window?.localStorage ?? globalThis.localStorage;
@@ -33,6 +35,23 @@ function resolveAssetsForDataSource(value) {
 
 function createLocalOnlySnapshotError() {
   return new Error("D1 snapshot 只在 Cloud Mode 下可用。");
+}
+
+function createStaleCloudDataError() {
+  const error = new Error(STALE_CLOUD_DATA_MESSAGE);
+  error.code = STALE_CLOUD_DATA_ERROR_CODE;
+  return error;
+}
+
+function getRevisionTimestamp(revision) {
+  if (!revision?.cloudUpdatedAt) return 0;
+
+  const timestamp = Date.parse(revision.cloudUpdatedAt);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function isCloudRevisionNewer(currentRevision, baselineRevision) {
+  return getRevisionTimestamp(currentRevision) > getRevisionTimestamp(baselineRevision);
 }
 
 export function getStoredDataSourceMode() {
@@ -68,6 +87,46 @@ export function createDataSource({
 } = {}) {
   const activeStore = mode === DATA_SOURCE_MODES.CLOUD ? cloudStore : localStore;
   const activeMode = mode === DATA_SOURCE_MODES.CLOUD ? DATA_SOURCE_MODES.CLOUD : DATA_SOURCE_MODES.LOCAL;
+  let cloudRevisionBaseline = null;
+
+  async function refreshCloudRevisionBaseline() {
+    if (activeMode !== DATA_SOURCE_MODES.CLOUD || typeof cloudStore.getCloudRevision !== "function") return null;
+
+    cloudRevisionBaseline = await cloudStore.getCloudRevision();
+    return cloudRevisionBaseline;
+  }
+
+  async function syncCloudRevisionBaselineAfterWrite() {
+    try {
+      return await refreshCloudRevisionBaseline();
+    } catch {
+      cloudRevisionBaseline = null;
+      return null;
+    }
+  }
+
+  async function assertCloudRevisionFresh() {
+    if (activeMode !== DATA_SOURCE_MODES.CLOUD) return null;
+    if (typeof cloudStore.getCloudRevision !== "function") {
+      throw new Error("Cloud revision API is not configured.");
+    }
+
+    const currentRevision = await cloudStore.getCloudRevision();
+
+    if (cloudRevisionBaseline && isCloudRevisionNewer(currentRevision, cloudRevisionBaseline)) {
+      throw createStaleCloudDataError();
+    }
+
+    cloudRevisionBaseline = currentRevision;
+    return currentRevision;
+  }
+
+  async function runGuardedCloudWrite(writeOperation) {
+    await assertCloudRevisionFresh();
+    const result = await writeOperation();
+    await syncCloudRevisionBaselineAfterWrite();
+    return result;
+  }
 
   return {
     mode: activeMode,
@@ -86,18 +145,38 @@ export function createDataSource({
       return localStore.saveAssets(assets);
     },
     createAsset(asset) {
+      if (activeMode === DATA_SOURCE_MODES.CLOUD) {
+        return runGuardedCloudWrite(() => cloudStore.createAsset(asset));
+      }
+
       return activeStore.createAsset(asset);
     },
     updateAsset(id, asset) {
+      if (activeMode === DATA_SOURCE_MODES.CLOUD) {
+        return runGuardedCloudWrite(() => cloudStore.updateAsset(id, asset));
+      }
+
       return activeStore.updateAsset(id, asset);
     },
     deleteAsset(id) {
+      if (activeMode === DATA_SOURCE_MODES.CLOUD) {
+        return runGuardedCloudWrite(() => cloudStore.deleteAsset(id));
+      }
+
       return activeStore.deleteAsset(id);
     },
     loadExchangeRates() {
       return activeStore.loadExchangeRates ? activeStore.loadExchangeRates() : activeStore.getExchangeRates();
     },
     saveExchangeRates(exchangeRates) {
+      if (activeMode === DATA_SOURCE_MODES.CLOUD) {
+        return runGuardedCloudWrite(() =>
+          cloudStore.saveExchangeRates
+            ? cloudStore.saveExchangeRates(exchangeRates)
+            : cloudStore.updateExchangeRates(exchangeRates),
+        );
+      }
+
       return activeStore.saveExchangeRates
         ? activeStore.saveExchangeRates(exchangeRates)
         : activeStore.updateExchangeRates(exchangeRates);
@@ -106,12 +185,46 @@ export function createDataSource({
       return activeStore.loadFinancialGoals ? activeStore.loadFinancialGoals() : activeStore.getFinancialGoals();
     },
     saveFinancialGoals(financialGoals) {
+      if (activeMode === DATA_SOURCE_MODES.CLOUD) {
+        return runGuardedCloudWrite(() =>
+          cloudStore.saveFinancialGoals
+            ? cloudStore.saveFinancialGoals(financialGoals)
+            : cloudStore.updateFinancialGoals(financialGoals),
+        );
+      }
+
       return activeStore.saveFinancialGoals
         ? activeStore.saveFinancialGoals(financialGoals)
         : activeStore.updateFinancialGoals(financialGoals);
     },
     loadSnapshot() {
-      return activeStore.loadSnapshot();
+      const snapshotValue = activeStore.loadSnapshot();
+
+      if (activeMode !== DATA_SOURCE_MODES.CLOUD) {
+        return snapshotValue;
+      }
+
+      return Promise.resolve(snapshotValue).then(async (snapshot) => {
+        const revision =
+          snapshot?.revision && typeof snapshot.revision === "object"
+            ? snapshot.revision
+            : await refreshCloudRevisionBaseline();
+        cloudRevisionBaseline = revision;
+
+        return {
+          ...snapshot,
+          assets: normalizeAssetsForDataSource(snapshot?.assets),
+          revision,
+        };
+      });
+    },
+    getCloudRevisionBaseline() {
+      return cloudRevisionBaseline;
+    },
+    refreshCloudRevisionBaseline,
+    importLocalBackup(backupPayload) {
+      if (activeMode !== DATA_SOURCE_MODES.CLOUD) return cloudStore.importLocalBackup(backupPayload);
+      return runGuardedCloudWrite(() => cloudStore.importLocalBackup(backupPayload));
     },
     listSnapshots() {
       if (activeMode !== DATA_SOURCE_MODES.CLOUD) return Promise.reject(createLocalOnlySnapshotError());
@@ -131,8 +244,9 @@ export function createDataSource({
     },
     async restoreSnapshot(snapshotId, options) {
       if (activeMode !== DATA_SOURCE_MODES.CLOUD) return Promise.reject(createLocalOnlySnapshotError());
-      const result = await cloudStore.restoreSnapshot(snapshotId, options);
+      const result = await runGuardedCloudWrite(() => cloudStore.restoreSnapshot(snapshotId, options));
       const snapshot = await cloudStore.loadSnapshot();
+      cloudRevisionBaseline = snapshot?.revision ?? (await refreshCloudRevisionBaseline());
 
       return {
         result,

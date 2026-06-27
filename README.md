@@ -11,6 +11,7 @@
 - v1.0 新增 opt-in Cloud Mode；使用者明確啟用後，assets 會改以 Cloudflare D1 作為主資料源
 - v1.1 起，Cloud Mode 下 assets、financialGoals 與 exchangeRates 都會以 Cloudflare D1 read/write 管理
 - v1.2 新增 D1 snapshot / 雲端備份安全層，可手動建立、下載與 guarded restore
+- v1.3 新增 Cloud Mode 寫入前 stale data guard，避免覆蓋其他裝置已更新的 D1 資料
 - Cloud Mode 不是自動雙向同步；手機與電腦共用 D1 資料，但需要重新整理或重新讀取才會看到另一端變更
 - 支援資產類型：
   - 現金
@@ -69,6 +70,7 @@ Cloud Mode 啟用後：
 - exchangeRates：D1 read/write
 - D1 snapshots：可手動建立、下載，restore 前會 preview 並要求明確確認
 - localStorage：僅作為本機 fallback / 手動備份
+- 寫入前會檢查 D1 revision；若其他裝置已更新，會阻止寫入並要求重新整理雲端資料
 - 仍不做自動雙向同步
 
 啟用 Cloud Mode 的條件：
@@ -81,7 +83,9 @@ Cloud Mode 啟用後：
 
 v1.2 已加入 D1 snapshot / cloud backup safety layer。Snapshot 內容包含目前 Cloud Mode 的 assets、financialGoals 與 exchangeRates；使用者可以手動建立與下載 snapshot JSON。`POST /api/import-local-backup` 在 replace D1 cloud copy 前會自動建立 `before_cloud_import` snapshot，即使目前 D1 是空資料也會建立一筆空 snapshot 作為操作紀錄。Restore 只支援從目前登入使用者自己的 D1 snapshot 還原，不支援任意 JSON restore；restore 前會先顯示 summary，要求輸入 `RESTORE`，並自動建立 `before_restore` snapshot。若 `before_restore` 建立失敗，restore 不會繼續。
 
-v1.2 仍不做 conflict detection、last-write-wins warning、changed elsewhere 提示、background sync、offline queue 或自動雙向同步；v1.3 以後才考慮 agent report / scheduled snapshot。
+v1.3 的 stale data guard 是輕量 changed-elsewhere 防呆：Cloud Mode 載入時記錄 D1 revision，新增、編輯、刪除、理財目標、匯率、snapshot restore 與 JSON replace cloud copy 前會重新檢查 revision；若 D1 已被其他裝置或頁面更新，本次寫入會被阻止，畫面不會先更新，也不會改 localStorage。使用者需要按「重新整理雲端資料」後再修改。
+
+v1.3 仍不做自動雙向同步、merge、override、background sync、offline queue 或完整 conflict resolution；agent report / scheduled snapshot 仍留待後續版本。
 
 ## 技術棧
 
@@ -330,6 +334,7 @@ GET    /api/financial-goals
 PUT    /api/financial-goals
 GET    /api/exchange-rates
 PUT    /api/exchange-rates
+GET    /api/cloud-revision
 GET    /api/snapshots
 POST   /api/snapshots
 GET    /api/snapshots/:id
@@ -338,7 +343,7 @@ POST   /api/snapshots/:id/restore
 POST   /api/import-local-backup
 ```
 
-v1.2 已實作：
+v1.3 已實作：
 
 ```text
 GET    /api/assets               讀取目前 verified user 的 active D1 assets
@@ -350,6 +355,7 @@ PUT    /api/financial-goals      upsert 目前 verified user 的 D1 goals_json
 GET    /api/exchange-rates       讀取目前 verified user 最新 D1 rates_json
 PUT    /api/exchange-rates       replace 目前 verified user 的最新 D1 rates_json
 GET    /api/cloud-status         回傳目前登入使用者是否已有雲端副本
+GET    /api/cloud-revision       回傳目前登入使用者的 D1 revision timestamps，供寫入前 stale check
 GET    /api/snapshots            只回目前 verified user 的 snapshot metadata list
 POST   /api/snapshots            從目前 D1 cloud data 建立 snapshot
 GET    /api/snapshots/:id        讀取目前 verified user 的完整 snapshot JSON
@@ -458,20 +464,22 @@ v0.9 的「上傳 JSON 建立雲端副本」只接受 Asset Agent JSON export，
 6. 後端會 upsert `profiles`，並將 assets、financial goals、exchange rates 寫入目前使用者的 cloud copy。
 7. 匯入採 replace cloud copy 策略：同一 user 既有 active assets 先 soft delete，再把這次 JSON backup 的 assets 寫成新的 active copy；同一 user 的 financial goals 與 exchange rates 會先刪除後重建。
 
-v1.1 Cloud Mode：
+v1.3 Cloud Mode：
 
 - 預設仍是 localStorage mode
 - 只有使用者明確勾選確認並按下啟用後，才會把資料來源切到 D1
 - cloud mode 下 assets 的新增、編輯與刪除會寫入 D1
 - cloud mode 下 financialGoals / exchangeRates 也會寫入 D1
 - 手機與電腦在 Cloud Mode 下共用 D1 資料，但需要重新整理或重新讀取才會看到另一端變更
+- 寫入前會檢查 D1 revision；若其他裝置已更新，會阻止本次寫入並提示重新整理雲端資料
 - cloud 寫入失敗時，畫面不會先更新，並會提示「資料未變更」
 - 若 D1 / Access / network 發生錯誤，使用者可以切回本機模式
 
 重要限制：
 
 - Cloud copy 不等於 sync。
-- v1.1 仍不做雙向同步、背景同步、offline queue 或 conflict resolution。
+- v1.3 stale guard 不是 merge / conflict resolution，也沒有 override 寫入。
+- v1.3 仍不做雙向同步、背景同步、offline queue 或完整 conflict resolution。
 - localStorage 不會被 D1 自動覆蓋。
 
 ## 資料驗證規則
@@ -494,8 +502,8 @@ v1.1 Cloud Mode：
 後續可以逐步加入：
 
 - cloud copy 到 dashboard 的人工比對 / 還原工具
-- conflict detection / last-write-wins warning / changed elsewhere 提示（v1.2 以後再評估）
-- agent report / scheduled snapshot（v1.3 以後再評估）
+- 更完整的 conflict detection / last-write-wins warning / changed elsewhere 詳細差異提示
+- agent report / scheduled snapshot
 - 使用者登入
 - 匯率 API
 - 股票現價 API

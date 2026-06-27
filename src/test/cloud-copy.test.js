@@ -3,6 +3,7 @@ import { ACCESS_JWT_HEADER } from "../../functions/_shared/access.js";
 import { getCloudCopyStatus } from "../../functions/_shared/cloud-copy.js";
 import { onRequestDelete as onAssetDelete, onRequestPut as onAssetPut } from "../../functions/api/assets/[id].js";
 import { onRequestGet as onAssetsGet, onRequestPost as onAssetsPost } from "../../functions/api/assets/index.js";
+import { onRequestGet as onCloudRevisionGet } from "../../functions/api/cloud-revision.js";
 import { onRequestGet as onCloudStatusGet } from "../../functions/api/cloud-status.js";
 import { onRequestGet as onExchangeRatesGet, onRequestPut as onExchangeRatesPut } from "../../functions/api/exchange-rates.js";
 import { onRequestGet as onFinancialGoalsGet, onRequestPut as onFinancialGoalsPut } from "../../functions/api/financial-goals.js";
@@ -337,6 +338,39 @@ function createFakeD1() {
 
   function firstStatement(sql, values) {
     if (sql === "SELECT 1 AS ok") return { ok: 1 };
+
+    if (sql.startsWith("SELECT MAX(updated_at) AS assetsUpdatedAt")) {
+      const userId = values[0];
+      return {
+        assetsUpdatedAt:
+          [...state.assets.values()]
+            .filter((row) => row.user_id === userId)
+            .map((row) => row.updated_at)
+            .filter(Boolean)
+            .sort()
+            .at(-1) ?? null,
+      };
+    }
+
+    if (sql.startsWith("SELECT MAX(updated_at) AS financialGoalsUpdatedAt")) {
+      const row = state.financialGoals.get(values[0]);
+      return {
+        financialGoalsUpdatedAt: row?.updated_at ?? null,
+      };
+    }
+
+    if (sql.startsWith("SELECT MAX(COALESCE(updated_at, fetched_at, created_at)) AS exchangeRatesUpdatedAt")) {
+      const userId = values[0];
+      return {
+        exchangeRatesUpdatedAt:
+          state.exchangeRates
+            .filter((row) => row.user_id === userId)
+            .map((row) => row.updated_at ?? row.fetched_at ?? row.created_at)
+            .filter(Boolean)
+            .sort()
+            .at(-1) ?? null,
+      };
+    }
 
     if (sql.startsWith("SELECT COUNT(*) AS count")) {
       const userId = values[0];
@@ -1428,6 +1462,107 @@ describe("D1 cloud copy assets, goals, rates, and status", () => {
     expect(JSON.parse(db.state.exchangeRates.find((row) => row.user_id === "verified-user-id").rates_json).fetchedAt).toBe(
       "2026-06-20T00:00:00.000Z",
     );
+  });
+
+  it("GET /api/cloud-revision 未驗證會回 401", async () => {
+    const response = await onCloudRevisionGet({
+      request: new Request("https://asset-agent.test/api/cloud-revision"),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: createFakeD1(),
+      },
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("GET /api/cloud-revision 無資料時 timestamps 皆為 null", async () => {
+    const response = await onCloudRevisionGet({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/cloud-revision"),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: createFakeD1(),
+      },
+    });
+    const payload = await jsonFromResponse(response);
+
+    expect(response.status).toBe(200);
+    expect(payload.revision).toEqual({
+      assetsUpdatedAt: null,
+      financialGoalsUpdatedAt: null,
+      exchangeRatesUpdatedAt: null,
+      cloudUpdatedAt: null,
+    });
+  });
+
+  it("GET /api/cloud-revision 只用 verified user 並回傳最大 cloudUpdatedAt", async () => {
+    const db = createFakeD1();
+    db.state.assets.set("active", {
+      id: "active",
+      user_id: "verified-user-id",
+      type: "cash",
+      name: "現金",
+      ticker: null,
+      currency: "TWD",
+      amount: 100,
+      amount_value: null,
+      shares: null,
+      buy_price: null,
+      market_price: null,
+      market_price_updated_at: null,
+      buy_date: null,
+      principal: null,
+      years: null,
+      annual_rate: null,
+      start_date: null,
+      note: "",
+      created_at: "2026-06-20T00:00:00.000Z",
+      updated_at: "2026-06-20T00:00:00.000Z",
+      deleted_at: null,
+    });
+    db.state.assets.set("deleted-newer", {
+      ...db.state.assets.get("active"),
+      id: "deleted-newer",
+      updated_at: "2026-06-23T00:00:00.000Z",
+      deleted_at: "2026-06-23T00:00:00.000Z",
+    });
+    db.state.financialGoals.set("verified-user-id", {
+      id: "goals",
+      user_id: "verified-user-id",
+      goals_json: JSON.stringify(financialGoalsFixture),
+      created_at: "2026-06-21T00:00:00.000Z",
+      updated_at: "2026-06-21T00:00:00.000Z",
+    });
+    db.state.exchangeRates.push({
+      id: "rates",
+      user_id: "verified-user-id",
+      rates_json: JSON.stringify(exchangeRatesFixture),
+      created_at: "2026-06-22T00:00:00.000Z",
+      updated_at: "2026-06-22T00:00:00.000Z",
+    });
+    db.state.assets.set("other-user-newer", {
+      ...db.state.assets.get("active"),
+      id: "other-user-newer",
+      user_id: "other-user-id",
+      updated_at: "2099-01-01T00:00:00.000Z",
+    });
+
+    const response = await onCloudRevisionGet({
+      request: await createAuthenticatedRequest("https://asset-agent.test/api/cloud-revision?user_id=other-user-id"),
+      env: {
+        ...ACCESS_ENV,
+        ASSET_AGENT_DB: db,
+      },
+    });
+    const payload = await jsonFromResponse(response);
+
+    expect(response.status).toBe(200);
+    expect(payload.revision).toEqual({
+      assetsUpdatedAt: "2026-06-23T00:00:00.000Z",
+      financialGoalsUpdatedAt: "2026-06-21T00:00:00.000Z",
+      exchangeRatesUpdatedAt: "2026-06-22T00:00:00.000Z",
+      cloudUpdatedAt: "2026-06-23T00:00:00.000Z",
+    });
   });
 
   it("cloud status 無 cloud copy 時回 hasCloudCopy false", async () => {

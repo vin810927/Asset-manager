@@ -2,8 +2,8 @@
 
 ## 近期優先
 
-- [ ] v1.2 後續：設計雲端同步衝突偵測、last-write-wins warning 與 rollback 策略
-- [ ] v1.3：建立 scheduled snapshot 與 agent report foundation
+- [ ] v1.4：設計更完整的 changed-elsewhere 詳細差異提示、last-write-wins warning 與 rollback 策略
+- [ ] v1.5：建立 scheduled snapshot 與 agent report foundation
 - [ ] 新增 cloud copy 與本機資料的人工比對流程
 - [ ] 改善 CSV preview 的欄位對照與錯誤定位
 - [ ] 新增基金類型的專屬欄位
@@ -90,3 +90,6 @@
 - [x] v1.2：snapshot 支援手動建立、metadata list、完整 JSON 下載與 restore preview
 - [x] v1.2：restore 前需輸入 RESTORE，且會自動建立 before_restore snapshot
 - [x] v1.2：import-local-backup replace 前會自動建立 before_cloud_import snapshot
+- [x] v1.3：新增 Cloud Mode 寫入前 stale data guard
+- [x] v1.3：新增 /api/cloud-revision，寫入前偵測其他裝置或頁面是否已更新 D1
+- [x] v1.3：stale 時阻止 assets、financialGoals、exchangeRates、restore 與 import-local-backup 寫入

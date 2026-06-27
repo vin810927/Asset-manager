@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-06-27：v1.3 新增 Cloud Mode stale data write guard
+
+### 決策
+新增 `GET /api/cloud-revision`，由 Cloudflare Access JWT 驗證目前使用者後，只回該使用者的 D1 revision timestamps：`assetsUpdatedAt`、`financialGoalsUpdatedAt`、`exchangeRatesUpdatedAt` 與三者最大值 `cloudUpdatedAt`。Assets revision 會包含 soft-deleted rows 的 `updated_at`，避免其他裝置刪除資料時漏偵測。
+
+前端 Cloud Mode 載入 D1 data 時記錄 baseline revision。所有會改變 cloud copy 的操作，包括 assets create / update / delete、financialGoals update、exchangeRates update、`import-local-backup` replace 與 snapshot restore，寫入前都先重新查 revision；若目前 D1 的 `cloudUpdatedAt` 晚於 baseline，dataSource 會丟出 `STALE_CLOUD_DATA`，App 阻止寫入、不更新 UI state、不寫 localStorage，並提示使用者重新整理雲端資料。
+
+### 理由
+- v1.0-v1.2 已讓手機與電腦共用 D1 canonical data，但尚未處理同時開多頁或跨裝置先後修改的覆蓋風險
+- 在沒有 merge UI、rollback detail 與完整 conflict resolution 前，最安全的最小可行方案是阻止 stale write，要求使用者先重新載入最新雲端資料
+- Revision endpoint 只使用既有 `updated_at` 欄位，不需要 D1 schema migration，也不需要保存額外 secret
+
+### 限制
+v1.3 不是完整 conflict resolution：不做 merge、不做 override button、不做自動雙向同步、background sync、offline queue、agent report 或 AI 建議。Revision check 只能防止「載入後雲端已更新」的覆蓋風險，無法提供欄位層級差異比較。
+
+---
+
 ## 2026-06-26：v1.2 新增 D1 snapshot 與 guarded restore
 
 ### 決策

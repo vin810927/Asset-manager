@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { createCloudStore, normalizeAssetsResponse } from "../data/cloudStore.js";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import { createCloudStore, normalizeAssetsResponse, normalizeCloudRevisionResponse } from "../data/cloudStore.js";
 import {
   DATA_SOURCE_MODE_STORAGE_KEY,
   DATA_SOURCE_MODES,
+  STALE_CLOUD_DATA_ERROR_CODE,
   createDataSource,
   getDefaultDataSourceMode,
   setStoredDataSourceMode,
@@ -124,6 +125,20 @@ describe("Asset Agent v0.7 data layer foundation", () => {
       fetcher: async (url, options = {}) => {
         calls.push({ url, method: options.method ?? "GET", body: options.body });
 
+        if (String(url).endsWith("/cloud-revision")) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              revision: {
+                assetsUpdatedAt: "2026-06-20T00:00:00.000Z",
+                financialGoalsUpdatedAt: "2026-06-20T00:00:00.000Z",
+                exchangeRatesUpdatedAt: "2026-06-20T00:00:00.000Z",
+                cloudUpdatedAt: "2026-06-20T00:00:00.000Z",
+              },
+            }),
+          );
+        }
+
         if (String(url).endsWith("/assets") && !options.method) {
           return new Response(JSON.stringify({ ok: true, assets: [assetsFixture[0]] }));
         }
@@ -174,7 +189,10 @@ describe("Asset Agent v0.7 data layer foundation", () => {
     await expect(dataSource.saveExchangeRates({ ...exchangeRatesFixture, fetchedAt: "2026-06-20T00:00:00.000Z" })).resolves.toMatchObject({
       fetchedAt: "2026-06-20T00:00:00.000Z",
     });
-    expect(calls.map((call) => call.method)).toEqual(["GET", "POST", "PUT", "DELETE", "GET", "GET", "PUT", "PUT"]);
+    expect(calls.filter((call) => String(call.url).endsWith("/cloud-revision"))).toHaveLength(10);
+    expect(calls.some((call) => String(call.url).endsWith("/assets") && call.method === "POST")).toBe(true);
+    expect(calls.some((call) => String(call.url).endsWith("/financial-goals") && call.method === "PUT")).toBe(true);
+    expect(calls.some((call) => String(call.url).endsWith("/exchange-rates") && call.method === "PUT")).toBe(true);
   });
 
   it("dataSource cloud mode 的 loadAssets 永遠輸出 array", async () => {
@@ -192,12 +210,256 @@ describe("Asset Agent v0.7 data layer foundation", () => {
     await expect(dataSource.loadAssets()).resolves.toEqual([assetsFixture[0]]);
   });
 
+  it("cloud revision response malformed 時會丟出可讀錯誤", () => {
+    expect(() => normalizeCloudRevisionResponse({ revision: { cloudUpdatedAt: 123 } })).toThrow("Cloud revision");
+    expect(() => normalizeCloudRevisionResponse({ revision: [] })).toThrow("Cloud revision");
+  });
+
+  it("local mode 不會呼叫 cloud revision API", () => {
+    const localStore = createLocalStore();
+    const dataSource = createDataSource({
+      mode: DATA_SOURCE_MODES.LOCAL,
+      localStore,
+      cloudStore: {
+        getCloudRevision: () => {
+          throw new Error("should not call cloud revision");
+        },
+      },
+    });
+
+    dataSource.saveAssets([assetsFixture[0]]);
+    expect(localStore.loadAssets()).toEqual([assetsFixture[0]]);
+  });
+
+  it("local mode 的手動 cloud backup import 不會呼叫 cloud revision API", async () => {
+    const importLocalBackup = vi.fn(async () => ({ ok: true, imported: { assets: 1 } }));
+    const dataSource = createDataSource({
+      mode: DATA_SOURCE_MODES.LOCAL,
+      localStore: createLocalStore(),
+      cloudStore: {
+        importLocalBackup,
+        getCloudRevision: () => {
+          throw new Error("should not call cloud revision");
+        },
+      },
+    });
+
+    await expect(
+      dataSource.importLocalBackup({
+        schemaVersion: 1,
+        assets: [assetsFixture[0]],
+        financialGoals: financialGoalsFixture,
+        exchangeRates: exchangeRatesFixture,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(importLocalBackup).toHaveBeenCalledTimes(1);
+  });
+
+  it("cloud mode loadSnapshot 會初始化 revision baseline", async () => {
+    const revision = {
+      assetsUpdatedAt: "2026-06-20T00:00:00.000Z",
+      financialGoalsUpdatedAt: null,
+      exchangeRatesUpdatedAt: null,
+      cloudUpdatedAt: "2026-06-20T00:00:00.000Z",
+    };
+    const dataSource = createDataSource({
+      mode: DATA_SOURCE_MODES.CLOUD,
+      localStore: createLocalStore(),
+      cloudStore: {
+        status: { label: "Cloudflare D1 雲端資料" },
+        async loadSnapshot() {
+          return {
+            assets: [assetsFixture[0]],
+            financialGoals: financialGoalsFixture,
+            exchangeRates: exchangeRatesFixture,
+            revision,
+          };
+        },
+      },
+    });
+
+    await expect(dataSource.loadSnapshot()).resolves.toMatchObject({ assets: [assetsFixture[0]], revision });
+    expect(dataSource.getCloudRevisionBaseline()).toEqual(revision);
+  });
+
+  it("cloud mode stale revision 會阻止寫入且不污染 localStore", async () => {
+    const localStore = createLocalStore();
+    localStore.saveAssets([assetsFixture[0]]);
+    const createAsset = vi.fn(async () => assetsFixture[1]);
+    const oldRevision = {
+      assetsUpdatedAt: "2026-06-20T00:00:00.000Z",
+      financialGoalsUpdatedAt: null,
+      exchangeRatesUpdatedAt: null,
+      cloudUpdatedAt: "2026-06-20T00:00:00.000Z",
+    };
+    const newerRevision = {
+      ...oldRevision,
+      assetsUpdatedAt: "2026-06-21T00:00:00.000Z",
+      cloudUpdatedAt: "2026-06-21T00:00:00.000Z",
+    };
+    const revisions = [oldRevision, newerRevision];
+    const dataSource = createDataSource({
+      mode: DATA_SOURCE_MODES.CLOUD,
+      localStore,
+      cloudStore: {
+        status: { label: "Cloudflare D1 雲端資料" },
+        getCloudRevision: async () => revisions.shift() ?? newerRevision,
+        createAsset,
+      },
+    });
+
+    await dataSource.refreshCloudRevisionBaseline();
+    await expect(dataSource.createAsset(assetsFixture[1])).rejects.toMatchObject({
+      code: STALE_CLOUD_DATA_ERROR_CODE,
+    });
+    expect(createAsset).not.toHaveBeenCalled();
+    expect(localStore.loadAssets()).toEqual([assetsFixture[0]]);
+  });
+
+  it("cloud mode 成功寫入後會更新 revision baseline", async () => {
+    const oldRevision = {
+      assetsUpdatedAt: "2026-06-20T00:00:00.000Z",
+      financialGoalsUpdatedAt: null,
+      exchangeRatesUpdatedAt: null,
+      cloudUpdatedAt: "2026-06-20T00:00:00.000Z",
+    };
+    const nextRevision = {
+      ...oldRevision,
+      assetsUpdatedAt: "2026-06-21T00:00:00.000Z",
+      cloudUpdatedAt: "2026-06-21T00:00:00.000Z",
+    };
+    const revisions = [oldRevision, oldRevision, nextRevision, nextRevision, nextRevision];
+    const createAsset = vi.fn(async (asset) => asset);
+    const dataSource = createDataSource({
+      mode: DATA_SOURCE_MODES.CLOUD,
+      localStore: createLocalStore(),
+      cloudStore: {
+        status: { label: "Cloudflare D1 雲端資料" },
+        getCloudRevision: async () => revisions.shift() ?? nextRevision,
+        createAsset,
+      },
+    });
+
+    await dataSource.refreshCloudRevisionBaseline();
+    await expect(dataSource.createAsset(assetsFixture[0])).resolves.toEqual(assetsFixture[0]);
+    await expect(dataSource.createAsset(assetsFixture[1])).resolves.toEqual(assetsFixture[1]);
+    expect(createAsset).toHaveBeenCalledTimes(2);
+    expect(dataSource.getCloudRevisionBaseline()).toEqual(nextRevision);
+  });
+
+  it("cloud mode assets / goals / rates / import / restore 寫入都會先檢查 revision", async () => {
+    const callOrder = [];
+    const revision = {
+      assetsUpdatedAt: "2026-06-20T00:00:00.000Z",
+      financialGoalsUpdatedAt: "2026-06-20T00:00:00.000Z",
+      exchangeRatesUpdatedAt: "2026-06-20T00:00:00.000Z",
+      cloudUpdatedAt: "2026-06-20T00:00:00.000Z",
+    };
+    const dataSource = createDataSource({
+      mode: DATA_SOURCE_MODES.CLOUD,
+      localStore: createLocalStore(),
+      cloudStore: {
+        status: { label: "Cloudflare D1 雲端資料" },
+        async getCloudRevision() {
+          callOrder.push("revision");
+          return revision;
+        },
+        async createAsset(asset) {
+          callOrder.push("createAsset");
+          return asset;
+        },
+        async updateAsset(id, asset) {
+          callOrder.push("updateAsset");
+          return { ...asset, id };
+        },
+        async deleteAsset(id) {
+          callOrder.push("deleteAsset");
+          return { ok: true, deleted: true, id };
+        },
+        async saveFinancialGoals(goals) {
+          callOrder.push("saveFinancialGoals");
+          return goals;
+        },
+        async saveExchangeRates(rates) {
+          callOrder.push("saveExchangeRates");
+          return rates;
+        },
+        async importLocalBackup(payload) {
+          callOrder.push("importLocalBackup");
+          return { ok: true, imported: { assets: payload.assets.length } };
+        },
+        async restoreSnapshot() {
+          callOrder.push("restoreSnapshot");
+          return { restoredAssetCount: 1, beforeRestoreSnapshotId: "before-1" };
+        },
+        async loadSnapshot() {
+          callOrder.push("loadSnapshot");
+          return {
+            assets: [assetsFixture[0]],
+            financialGoals: financialGoalsFixture,
+            exchangeRates: exchangeRatesFixture,
+            revision,
+          };
+        },
+      },
+    });
+
+    await dataSource.createAsset(assetsFixture[0]);
+    await dataSource.updateAsset(assetsFixture[0].id, assetsFixture[0]);
+    await dataSource.deleteAsset(assetsFixture[0].id);
+    await dataSource.saveFinancialGoals(financialGoalsFixture);
+    await dataSource.saveExchangeRates(exchangeRatesFixture);
+    await dataSource.importLocalBackup({
+      schemaVersion: 1,
+      assets: [assetsFixture[0]],
+      financialGoals: financialGoalsFixture,
+      exchangeRates: exchangeRatesFixture,
+    });
+    await dataSource.restoreSnapshot("snapshot-1", { confirm: "RESTORE" });
+
+    expect(callOrder).toEqual([
+      "revision",
+      "createAsset",
+      "revision",
+      "revision",
+      "updateAsset",
+      "revision",
+      "revision",
+      "deleteAsset",
+      "revision",
+      "revision",
+      "saveFinancialGoals",
+      "revision",
+      "revision",
+      "saveExchangeRates",
+      "revision",
+      "revision",
+      "importLocalBackup",
+      "revision",
+      "revision",
+      "restoreSnapshot",
+      "revision",
+      "loadSnapshot",
+    ]);
+  });
+
   it("cloud 寫入失敗不污染 localStore", async () => {
     const localStore = createLocalStore();
     localStore.saveAssets([assetsFixture[0]]);
 
     const cloudStore = createCloudStore({
-      fetcher: async () => new Response(JSON.stringify({ ok: false, error: "D1 write failed" }), { status: 500 }),
+      fetcher: async (url) => {
+        if (String(url).endsWith("/cloud-revision")) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              revision: { assetsUpdatedAt: null, financialGoalsUpdatedAt: null, exchangeRatesUpdatedAt: null, cloudUpdatedAt: null },
+            }),
+          );
+        }
+
+        return new Response(JSON.stringify({ ok: false, error: "D1 write failed" }), { status: 500 });
+      },
     });
     const dataSource = createDataSource({
       mode: DATA_SOURCE_MODES.CLOUD,
@@ -245,14 +507,24 @@ describe("Asset Agent v0.7 data layer foundation", () => {
     localStore.saveExchangeRates(exchangeRatesFixture);
 
     const cloudStore = createCloudStore({
-      fetcher: async (url) =>
-        new Response(
+      fetcher: async (url) => {
+        if (String(url).endsWith("/cloud-revision")) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              revision: { assetsUpdatedAt: null, financialGoalsUpdatedAt: null, exchangeRatesUpdatedAt: null, cloudUpdatedAt: null },
+            }),
+          );
+        }
+
+        return new Response(
           JSON.stringify({
             ok: false,
             error: String(url).includes("financial-goals") ? "D1 goals write failed" : "D1 rates write failed",
           }),
           { status: 500 },
-        ),
+        );
+      },
     });
     const dataSource = createDataSource({
       mode: DATA_SOURCE_MODES.CLOUD,
@@ -288,6 +560,20 @@ describe("Asset Agent v0.7 data layer foundation", () => {
     };
     const cloudStore = createCloudStore({
       fetcher: async (url) => {
+        if (String(url).endsWith("/cloud-revision")) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              revision: {
+                assetsUpdatedAt: "2026-06-20T00:00:00.000Z",
+                financialGoalsUpdatedAt: "2026-06-20T00:00:00.000Z",
+                exchangeRatesUpdatedAt: "2026-06-20T00:00:00.000Z",
+                cloudUpdatedAt: "2026-06-20T00:00:00.000Z",
+              },
+            }),
+          );
+        }
+
         if (String(url).endsWith("/assets")) {
           return new Response(JSON.stringify({ ok: true, assets: [assetsFixture.find((asset) => asset.id === "cash-usd")] }));
         }
@@ -429,6 +715,20 @@ describe("Asset Agent v0.7 data layer foundation", () => {
     localStore.saveAssets([assetsFixture[0]]);
     const cloudStore = createCloudStore({
       fetcher: async (url, options = {}) => {
+        if (String(url).endsWith("/cloud-revision")) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              revision: {
+                assetsUpdatedAt: "2026-06-20T00:00:00.000Z",
+                financialGoalsUpdatedAt: "2026-06-20T00:00:00.000Z",
+                exchangeRatesUpdatedAt: "2026-06-20T00:00:00.000Z",
+                cloudUpdatedAt: "2026-06-20T00:00:00.000Z",
+              },
+            }),
+          );
+        }
+
         if (String(url).endsWith("/restore")) {
           return new Response(JSON.stringify({ ok: true, restoredAssetCount: 1, beforeRestoreSnapshotId: "before-1" }));
         }

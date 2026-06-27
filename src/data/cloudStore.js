@@ -45,6 +45,28 @@ export function normalizeAssetsResponse(payload) {
   };
 }
 
+export function normalizeCloudRevisionResponse(payload) {
+  const revision = payload?.revision ?? payload;
+
+  if (!revision || typeof revision !== "object" || Array.isArray(revision)) {
+    throw new Error("Cloud revision 回應格式不正確。");
+  }
+
+  const normalized = {
+    assetsUpdatedAt: revision.assetsUpdatedAt ?? null,
+    financialGoalsUpdatedAt: revision.financialGoalsUpdatedAt ?? null,
+    exchangeRatesUpdatedAt: revision.exchangeRatesUpdatedAt ?? null,
+    cloudUpdatedAt: revision.cloudUpdatedAt ?? null,
+  };
+  const hasInvalidValue = Object.values(normalized).some((value) => value !== null && typeof value !== "string");
+
+  if (hasInvalidValue) {
+    throw new Error("Cloud revision 回應格式不正確。");
+  }
+
+  return normalized;
+}
+
 export function createCloudStore({ apiBaseUrl = DEFAULT_API_BASE_URL, fetcher = globalThis.fetch } = {}) {
   function assertConfigured() {
     if (typeof fetcher !== "function") {
@@ -82,6 +104,10 @@ export function createCloudStore({ apiBaseUrl = DEFAULT_API_BASE_URL, fetcher = 
     },
     getCloudStatus() {
       return request("/cloud-status");
+    },
+    async getCloudRevision() {
+      const payload = await request("/cloud-revision");
+      return normalizeCloudRevisionResponse(payload);
     },
     async getAssets() {
       const payload = await request("/assets");
@@ -191,16 +217,18 @@ export function createCloudStore({ apiBaseUrl = DEFAULT_API_BASE_URL, fetcher = 
       return result;
     },
     async loadSnapshot() {
-      const [assets, financialGoals, exchangeRates] = await Promise.all([
+      const [assets, financialGoals, exchangeRates, revision] = await Promise.all([
         this.getAssets(),
         this.getFinancialGoals(),
         this.getExchangeRates(),
+        this.getCloudRevision(),
       ]);
 
       return {
         assets,
         exchangeRates,
         financialGoals,
+        revision,
       };
     },
   };
