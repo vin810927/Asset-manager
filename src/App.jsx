@@ -48,6 +48,7 @@ import {
   getDefaultDataSourceMode,
   setStoredDataSourceMode,
 } from "./data/dataSource.js";
+import { buildAssetReport } from "./report/buildAssetReport.js";
 
 function getTodayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -539,6 +540,11 @@ function getSnapshotFileName(snapshot) {
   return `asset-agent-d1-snapshot-${date}.json`;
 }
 
+function getAssetReportFileName(report) {
+  const date = String(report?.generatedAt || new Date().toISOString()).slice(0, 10);
+  return `asset-agent-report-${date}.json`;
+}
+
 function getSnapshotReasonLabel(reason) {
   if (reason === "before_cloud_import") return "匯入前";
   if (reason === "before_restore") return "還原前";
@@ -676,6 +682,8 @@ function App() {
   const [isAssetFormOpen, setIsAssetFormOpen] = useState(false);
   const [isCurrencyBreakdownOpen, setIsCurrencyBreakdownOpen] = useState(false);
   const [isDataToolsOpen, setIsDataToolsOpen] = useState(false);
+  const [isAssetReportOpen, setIsAssetReportOpen] = useState(false);
+  const [assetReportGeneratedAt, setAssetReportGeneratedAt] = useState(() => new Date().toISOString());
   const [dataToolStatus, setDataToolStatus] = useState("");
   const [form, setForm] = useState(() => createEmptyForm());
   const [editForm, setEditForm] = useState(() => createEmptyForm());
@@ -727,6 +735,21 @@ function App() {
   const latestSnapshot = cloudSnapshots[0] ?? null;
   const selectedSnapshot =
     cloudSnapshots.find((snapshot) => snapshot.id === selectedSnapshotId) ?? latestSnapshot;
+  const assetReport = useMemo(
+    () =>
+      buildAssetReport({
+        assets,
+        exchangeRates,
+        financialGoals,
+        snapshots: cloudSnapshots,
+        dataSourceMode: isCloudMode ? "cloudflare-d1" : "localStorage",
+        cloudMode: isCloudMode,
+        generatedAt: assetReportGeneratedAt,
+      }),
+    [assetReportGeneratedAt, assets, cloudSnapshots, exchangeRates, financialGoals, isCloudMode],
+  );
+  const assetReportRiskPreview = assetReport.riskFlags.slice(0, 4);
+  const assetReportActionPreview = assetReport.actionItems.slice(0, 5);
 
   const refreshCloudSnapshots = useCallback(
     async ({ quiet = false } = {}) => {
@@ -1460,6 +1483,16 @@ function App() {
     setDataToolStatus(`已匯出 ${assets.length} 筆資產資料為 CSV。`);
   }
 
+  function regenerateAssetReport() {
+    setAssetReportGeneratedAt(new Date().toISOString());
+    setDataToolStatus("已重新產生規則型資產報告。");
+  }
+
+  function downloadAssetReportJson() {
+    downloadTextFile(JSON.stringify(assetReport, null, 2), getAssetReportFileName(assetReport), "application/json");
+    setDataToolStatus("已下載資產報告 JSON。");
+  }
+
   function downloadCsvTemplate() {
     downloadTextFile(createCsvTemplate(), "asset-agent-template.csv", "text/csv;charset=utf-8");
     setDataToolStatus("已下載 Asset Agent 標準 CSV 範本。");
@@ -2190,6 +2223,184 @@ function App() {
             </div>
           )}
         </section>
+      </section>
+
+      <section className={`panel asset-report-panel${isAssetReportOpen ? " is-open" : ""}`} aria-label="資產報告">
+        <button
+          className="asset-report-toggle disclosure-button card-button"
+          type="button"
+          aria-expanded={isAssetReportOpen}
+          onClick={() => setIsAssetReportOpen((current) => !current)}
+        >
+          <span>資產報告</span>
+          <small>規則型摘要，未使用 AI</small>
+          <span className="expand-indicator">
+            <ChevronIcon isOpen={isAssetReportOpen} />
+          </span>
+        </button>
+
+        {isAssetReportOpen && (
+          <div className="asset-report-body">
+            <div className="asset-report-header">
+              <div>
+                <strong>Deterministic asset report</strong>
+                <small>
+                  產生時間：{formatDateTime(assetReport.generatedAt)} · 來源：
+                  {assetReport.source.cloudMode ? "Cloudflare D1" : "localStorage"}
+                </small>
+              </div>
+              <div className="asset-report-actions">
+                <button className="ghost-button secondary-action" type="button" onClick={regenerateAssetReport}>
+                  重新產生報告
+                </button>
+                <button className="ghost-button secondary-action" type="button" onClick={downloadAssetReportJson}>
+                  下載報告 JSON
+                </button>
+              </div>
+            </div>
+
+            <div className="asset-report-summary-grid">
+              <div>
+                <span>淨資產</span>
+                <strong>{formatCompactMoney(assetReport.summary.netWorthTwd, "TWD")}</strong>
+              </div>
+              <div>
+                <span>總資產</span>
+                <strong>{formatCompactMoney(assetReport.summary.totalAssetsTwd, "TWD")}</strong>
+              </div>
+              <div>
+                <span>總負債</span>
+                <strong>{formatCompactMoney(assetReport.summary.totalLiabilitiesTwd, "TWD")}</strong>
+              </div>
+              <div>
+                <span>緊急預備金</span>
+                <strong>{formatNumber(assetReport.allocation.emergencyFundMonths)} 個月</strong>
+              </div>
+            </div>
+
+            <div className="asset-report-grid">
+              <article className="asset-report-card">
+                <div>
+                  <strong>類別配置</strong>
+                  <small>
+                    股票 / ETF / 基金曝險 {formatNumber(assetReport.allocation.stockExposurePercent)}%
+                  </small>
+                </div>
+                <div className="report-list">
+                  {assetReport.allocation.byAssetType.map((item) => (
+                    <div key={item.type}>
+                      <span>{item.label}</span>
+                      <strong>{formatCompactMoney(item.valueTwd, "TWD")}</strong>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="asset-report-card">
+                <div>
+                  <strong>幣別曝險</strong>
+                  <small>以 TWD 估算；缺匯率會標示為未納入</small>
+                </div>
+                <div className="report-list">
+                  {assetReport.allocation.byCurrency.length === 0 ? (
+                    <p className="muted">尚無幣別資料。</p>
+                  ) : (
+                    assetReport.allocation.byCurrency.map((item) => (
+                      <div key={item.currency}>
+                        <span>{item.currency}</span>
+                        <strong>
+                          {item.missingRate
+                            ? "缺匯率"
+                            : `${formatCompactMoney(item.assetsTwd, "TWD")} · ${formatNumber(item.percentOfTotalAssets)}%`}
+                        </strong>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </article>
+
+              <article className="asset-report-card">
+                <div>
+                  <strong>風險提示</strong>
+                  <small>{assetReport.riskFlags.length} 項規則型提示，非投資建議</small>
+                </div>
+                {assetReportRiskPreview.length === 0 ? (
+                  <p className="muted">目前沒有明顯風險提示。</p>
+                ) : (
+                  <ul className="report-chip-list">
+                    {assetReportRiskPreview.map((item) => (
+                      <li key={item.code}>{item.label}</li>
+                    ))}
+                  </ul>
+                )}
+              </article>
+
+              <article className="asset-report-card">
+                <div>
+                  <strong>待處理事項</strong>
+                  <small>{assetReport.actionItems.length} 項 action items</small>
+                </div>
+                {assetReportActionPreview.length === 0 ? (
+                  <p className="muted">目前沒有明顯待處理事項。</p>
+                ) : (
+                  <ul className="report-chip-list">
+                    {assetReportActionPreview.map((item) => (
+                      <li key={`${item.code}-${item.label}`}>{item.label}</li>
+                    ))}
+                  </ul>
+                )}
+              </article>
+
+              <article className="asset-report-card">
+                <div>
+                  <strong>資料品質</strong>
+                  <small>{assetReport.dataQuality.assetCount} 筆資產納入報告</small>
+                </div>
+                <div className="report-list">
+                  <div>
+                    <span>缺市價</span>
+                    <strong>{assetReport.dataQuality.missingMarketPriceCount}</strong>
+                  </div>
+                  <div>
+                    <span>市價過期</span>
+                    <strong>{assetReport.dataQuality.staleMarketPriceCount}</strong>
+                  </div>
+                  <div>
+                    <span>缺代號</span>
+                    <strong>{assetReport.dataQuality.missingTickerCount}</strong>
+                  </div>
+                  <div>
+                    <span>同名提醒</span>
+                    <strong>{assetReport.dataQuality.duplicateNameWarnings.length}</strong>
+                  </div>
+                </div>
+              </article>
+
+              <article className="asset-report-card">
+                <div>
+                  <strong>Snapshot 狀態</strong>
+                  <small>{assetReport.source.cloudMode ? "Cloud Mode D1 snapshot metadata" : "local mode 不適用 D1 snapshot"}</small>
+                </div>
+                <div className="report-list">
+                  <div>
+                    <span>最近 snapshot</span>
+                    <strong>
+                      {assetReport.source.latestSnapshotAt ? formatDateTime(assetReport.source.latestSnapshotAt) : "尚無"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>報告用途</span>
+                    <strong>規則型摘要</strong>
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            <p className="asset-report-note">
+              本報告只依目前已載入資料即時計算，不呼叫 AI、不寫入 D1、不提供投資買賣建議。
+            </p>
+          </div>
+        )}
       </section>
 
       <section className="panel">

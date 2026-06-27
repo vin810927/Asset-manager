@@ -2,8 +2,8 @@
 
 ## 近期優先
 
-- [ ] v1.4：設計更完整的 changed-elsewhere 詳細差異提示、last-write-wins warning 與 rollback 策略
-- [ ] v1.5：建立 scheduled snapshot 與 agent report foundation
+- [ ] v1.5：設計更完整的 changed-elsewhere 詳細差異提示、last-write-wins warning 與 rollback 策略
+- [ ] v1.6：建立 scheduled snapshot 與 agent report foundation
 - [ ] 新增 cloud copy 與本機資料的人工比對流程
 - [ ] 改善 CSV preview 的欄位對照與錯誤定位
 - [ ] 新增基金類型的專屬欄位
@@ -93,3 +93,6 @@
 - [x] v1.3：新增 Cloud Mode 寫入前 stale data guard
 - [x] v1.3：新增 /api/cloud-revision，寫入前偵測其他裝置或頁面是否已更新 D1
 - [x] v1.3：stale 時阻止 assets、financialGoals、exchangeRates、restore 與 import-local-backup 寫入
+- [x] v1.4：新增 deterministic asset report foundation
+- [x] v1.4：資產報告支援規則型摘要、riskFlags、actionItems、dataQuality 與 JSON 下載
+- [x] v1.4：report 不使用 AI、不寫入 D1，作為未來 agent report 的穩定 input

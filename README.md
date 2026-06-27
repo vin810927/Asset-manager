@@ -12,6 +12,7 @@
 - v1.1 起，Cloud Mode 下 assets、financialGoals 與 exchangeRates 都會以 Cloudflare D1 read/write 管理
 - v1.2 新增 D1 snapshot / 雲端備份安全層，可手動建立、下載與 guarded restore
 - v1.3 新增 Cloud Mode 寫入前 stale data guard，避免覆蓋其他裝置已更新的 D1 資料
+- v1.4 新增 deterministic asset report foundation，提供規則型摘要、風險旗標與資料品質檢查
 - Cloud Mode 不是自動雙向同步；手機與電腦共用 D1 資料，但需要重新整理或重新讀取才會看到另一端變更
 - 支援資產類型：
   - 現金
@@ -39,6 +40,7 @@
 - 支援 Asset Agent 標準 CSV 匯出、CSV 範本下載與匯入 preview
 - 支援新增表單與 CSV 匯入共用的資料驗證，error 會阻止寫入，warning 需在頁面內人工確認
 - 資產明細會以低飽和 badge 標示幣別待確認、高集中與資料過期
+- 資產報告可即時計算並下載 JSON；報告未使用 AI，也不會寫入 D1
 - 新增貸款時需輸入：
   - 貸款名稱
   - 本金
@@ -85,7 +87,9 @@ v1.2 已加入 D1 snapshot / cloud backup safety layer。Snapshot 內容包含�
 
 v1.3 的 stale data guard 是輕量 changed-elsewhere 防呆：Cloud Mode 載入時記錄 D1 revision，新增、編輯、刪除、理財目標、匯率、snapshot restore 與 JSON replace cloud copy 前會重新檢查 revision；若 D1 已被其他裝置或頁面更新，本次寫入會被阻止，畫面不會先更新，也不會改 localStorage。使用者需要按「重新整理雲端資料」後再修改。
 
-v1.3 仍不做自動雙向同步、merge、override、background sync、offline queue 或完整 conflict resolution；agent report / scheduled snapshot 仍留待後續版本。
+v1.4 新增 deterministic asset report foundation。Report 只從目前 App 已載入的 assets、financialGoals、exchangeRates 與 snapshot metadata 即時計算，包含淨資產、類別配置、幣別曝險、集中度、緊急預備金、stale assets、待處理事項與資料品質。Report 可下載 JSON，未使用 AI、不呼叫任何 AI API、不寫入 D1，也不是投資建議。未來 AI report 會以 deterministic report 作為穩定 input，而不是直接吃 raw assets。
+
+v1.4 仍不做自動雙向同步、merge、override、background sync、offline queue、完整 conflict resolution、scheduled report、scheduled snapshot 或 notification；agent report 仍留待後續版本。
 
 ## 技術棧
 
@@ -175,6 +179,8 @@ asset-agent/
       cloudStore.js
       dataSource.js
       localStore.js
+    report/
+      buildAssetReport.js
     main.jsx
     styles.css
     utils.js
@@ -481,6 +487,56 @@ v1.3 Cloud Mode：
 - v1.3 stale guard 不是 merge / conflict resolution，也沒有 override 寫入。
 - v1.3 仍不做雙向同步、背景同步、offline queue 或完整 conflict resolution。
 - localStorage 不會被 D1 自動覆蓋。
+
+## Deterministic asset report
+
+v1.4 新增 `src/report/buildAssetReport.js`。這是一個純前端、規則型 report builder，輸入目前 App 已載入的 `assets`、`financialGoals`、`exchangeRates` 與 Cloud Mode 已載入的 snapshot metadata，輸出 schema version 1 的 JSON：
+
+```js
+{
+  schemaVersion: 1,
+  generatedAt: "ISO timestamp",
+  source: {
+    dataSourceMode: "localStorage | cloudflare-d1",
+    cloudMode: true,
+    exchangeRatesFetchedAt: "...",
+    latestSnapshotAt: "..."
+  },
+  summary: {
+    netWorthTwd: 0,
+    totalAssetsTwd: 0,
+    totalLiabilitiesTwd: 0,
+    cashTwd: 0,
+    stockTwd: 0,
+    etfTwd: 0,
+    fundTwd: 0,
+    loanTwd: 0
+  },
+  allocation: {
+    byAssetType: [],
+    byCurrency: [],
+    stockExposurePercent: 0,
+    debtRatioPercent: 0,
+    emergencyFundMonths: 0
+  },
+  riskFlags: [],
+  actionItems: [],
+  staleAssets: [],
+  concentration: {
+    topHoldings: [],
+    singleHoldingLimitBreaches: []
+  },
+  dataQuality: {
+    assetCount: 0,
+    missingMarketPriceCount: 0,
+    staleMarketPriceCount: 0,
+    missingTickerCount: 0,
+    duplicateNameWarnings: []
+  }
+}
+```
+
+Report 規則沿用既有 `utils.js` 的淨值、曝險、集中度、stale asset 與 financial goals 計算。`monthlyLivingExpense` 依目前 UI 定義視為 TWD 金額，因此 emergency fund months = `cashTwd / monthlyLivingExpense`。Report 不呼叫 AI、不需要 API key、不做投資買賣建議、不寫入 D1、不建立 report table；使用者可在 UI 重新產生並下載 JSON。
 
 ## 資料驗證規則
 

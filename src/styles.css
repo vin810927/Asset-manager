@@ -359,6 +359,175 @@ h2 {
   grid-area: icon;
 }
 
+.asset-report-panel {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 10px;
+}
+
+.asset-report-toggle {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title icon"
+    "meta icon";
+  gap: 3px 12px;
+  align-items: center;
+  border: 0;
+  border-radius: 16px;
+  background: var(--row-bg);
+  color: var(--text);
+  padding: 12px 12px 12px 14px;
+  text-align: left;
+}
+
+.asset-report-toggle:hover,
+.asset-report-toggle:focus-visible,
+.asset-report-panel.is-open .asset-report-toggle {
+  background: var(--row-hover);
+}
+
+.asset-report-toggle > span:first-child {
+  grid-area: title;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.asset-report-toggle small {
+  grid-area: meta;
+  color: var(--soft-text);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.asset-report-toggle .expand-indicator {
+  grid-area: icon;
+}
+
+.asset-report-body {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--row-border);
+  padding: 12px 4px 4px;
+}
+
+.asset-report-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.asset-report-header strong,
+.asset-report-header small {
+  display: block;
+}
+
+.asset-report-header small,
+.asset-report-note {
+  margin: 3px 0 0;
+  color: var(--soft-text);
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.asset-report-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.asset-report-summary-grid,
+.asset-report-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.asset-report-summary-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.asset-report-summary-grid > div,
+.asset-report-card {
+  border: 1px solid var(--row-border);
+  border-radius: 14px;
+  background: var(--row-bg);
+  padding: 10px 12px;
+}
+
+.asset-report-summary-grid > div {
+  display: grid;
+  gap: 3px;
+}
+
+.asset-report-summary-grid span,
+.asset-report-card small,
+.report-list span {
+  color: var(--soft-text);
+  font-size: 0.76rem;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.asset-report-summary-grid strong,
+.asset-report-card strong,
+.report-list strong {
+  color: var(--text);
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.asset-report-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.asset-report-card {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.report-list {
+  display: grid;
+  gap: 7px;
+}
+
+.report-list > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.report-list strong {
+  text-align: right;
+}
+
+.report-chip-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.report-chip-list li {
+  border: 1px solid var(--warning-border);
+  border-radius: 12px;
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  padding: 7px 9px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .data-tools-body {
   display: grid;
   gap: 12px;
@@ -2488,26 +2657,45 @@ select:focus {
   }
 
   .add-asset-panel,
-  .data-tools-panel {
+  .data-tools-panel,
+  .asset-report-panel {
     padding: 8px;
   }
 
   .add-asset-toggle,
-  .data-tools-toggle {
+  .data-tools-toggle,
+  .asset-report-toggle {
     min-height: 0;
     border-radius: 14px;
     padding: 10px 10px 10px 12px;
   }
 
   .add-asset-toggle > span:first-child,
-  .data-tools-toggle > span:first-child {
+  .data-tools-toggle > span:first-child,
+  .asset-report-toggle > span:first-child {
     font-size: 0.96rem;
   }
 
   .add-asset-toggle small,
-  .data-tools-toggle small {
+  .data-tools-toggle small,
+  .asset-report-toggle small {
     font-size: 0.76rem;
     line-height: 1.25;
+  }
+
+  .asset-report-header {
+    display: grid;
+    gap: 8px;
+  }
+
+  .asset-report-actions,
+  .asset-report-actions .ghost-button {
+    width: 100%;
+  }
+
+  .asset-report-summary-grid,
+  .asset-report-grid {
+    grid-template-columns: 1fr;
   }
 
   .data-source-status {

@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-06-27：v1.4 新增 deterministic asset report foundation
+
+### 決策
+新增 `src/report/buildAssetReport.js`，以目前 App 已載入的 `assets`、`financialGoals`、`exchangeRates` 與 snapshot metadata 即時計算 schema version 1 的 deterministic asset report。Report 內容包含 summary、allocation、riskFlags、actionItems、staleAssets、concentration 與 dataQuality，並可在 UI 重新產生與下載 JSON。
+
+Report builder 沿用既有 `utils.js` 的淨值、曝險、集中度、stale asset 與 financial goals 計算邏輯，不另寫一套財務算法。`monthlyLivingExpense` 依既有 UI 與 `DEFAULT_FINANCIAL_GOALS` 定義視為 TWD 金額，因此 emergency fund months 使用 `cashTwd / monthlyLivingExpense`。
+
+### 理由
+- 未來 AI report 不應直接吃 raw assets；先建立 deterministic report 作為穩定 input，可以讓規則、測試與資料品質先被固定
+- 規則型 report 不需要 API key，不會引入 secret 或 AI 服務依賴，也不會讓使用者誤以為這是投資建議
+- Report 即時計算且可下載 JSON，能先支援人工檢查與後續 agent pipeline，不需要 D1 schema 或 report table
+
+### 限制
+v1.4 不呼叫 AI、不做投資買賣建議、不做 scheduled report、scheduled snapshot、email、notification、PDF、D1 寫入、D1 schema migration、自動雙向同步、background sync、offline queue、merge 或 conflict resolution。Report 只反映目前 App 已載入的資料。
+
+---
+
 ## 2026-06-27：v1.3 新增 Cloud Mode stale data write guard
 
 ### 決策
