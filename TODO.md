@@ -2,8 +2,8 @@
 
 ## 近期優先
 
-- [ ] v1.5：設計更完整的 changed-elsewhere 詳細差異提示、last-write-wins warning 與 rollback 策略
-- [ ] v1.6：建立 scheduled snapshot 與 agent report foundation
+- [ ] v1.6：設計更完整的 changed-elsewhere 詳細差異提示、last-write-wins warning 與 rollback 策略
+- [ ] v1.7：建立 scheduled snapshot 與 agent report foundation
 - [ ] 新增 cloud copy 與本機資料的人工比對流程
 - [ ] 改善 CSV preview 的欄位對照與錯誤定位
 - [ ] 新增基金類型的專屬欄位
@@ -96,3 +96,6 @@
 - [x] v1.4：新增 deterministic asset report foundation
 - [x] v1.4：資產報告支援規則型摘要、riskFlags、actionItems、dataQuality 與 JSON 下載
 - [x] v1.4：report 不使用 AI、不寫入 D1，作為未來 agent report 的穩定 input
+- [x] v1.5：優化 deterministic report UX，中文化標題、風險分級與待處理事項分類
+- [x] v1.5：新增 AI-ready JSON export，作為未來 AI narrative report 的穩定 input
+- [x] v1.5：新增 Markdown report export；仍不呼叫 AI、不寫入 D1、不做 scheduled report

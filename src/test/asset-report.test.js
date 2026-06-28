@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAssetReport } from "../report/buildAssetReport.js";
+import { buildAiReadyReportInput, buildAssetReport, buildMarkdownAssetReport } from "../report/buildAssetReport.js";
 import { createExchangeRateStore } from "../utils.js";
 import { assetsFixture, exchangeRatesFixture, financialGoalsFixture, FIXED_NOW } from "./fixtures.js";
 
@@ -30,6 +30,62 @@ describe("deterministic asset report", () => {
     );
     expect(report.dataQuality.assetCount).toBe(0);
     expect(report.actionItems.some((item) => item.code === "empty-assets")).toBe(true);
+  });
+
+  it("riskFlags 具有 v1.5 schema 且保留舊 code / label 相容欄位", () => {
+    const report = buildAssetReport({
+      assets: assetsFixture,
+      financialGoals: { ...financialGoalsFixture, singleHoldingLimitPercent: 10 },
+      exchangeRates: exchangeRatesFixture,
+      generatedAt: FIXED_NOW,
+      now: new Date(FIXED_NOW),
+    });
+    const flag = report.riskFlags.find((item) => item.code === "single-holding-concentration");
+
+    expect(flag).toEqual(
+      expect.objectContaining({
+        id: "single-holding-concentration",
+        code: "single-holding-concentration",
+        severity: expect.stringMatching(/^(info|warning|critical)$/),
+        category: "concentration",
+        title: expect.any(String),
+        message: expect.any(String),
+        label: expect.any(String),
+        relatedAssetIds: expect.any(Array),
+      }),
+    );
+  });
+
+  it("actionItems 具有 v1.5 schema 且依類別描述待處理事項", () => {
+    const report = buildAssetReport({
+      assets: [
+        {
+          id: "old-cash",
+          type: "cash",
+          currency: "TWD",
+          name: "舊現金",
+          amount: 100,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      financialGoals: { ...financialGoalsFixture, staleAssetDays: 30 },
+      exchangeRates: exchangeRatesFixture,
+      generatedAt: FIXED_NOW,
+      now: new Date("2026-06-15T00:00:00.000Z"),
+    });
+    const action = report.actionItems.find((item) => item.code === "stale-assets");
+
+    expect(action).toEqual(
+      expect.objectContaining({
+        id: "stale-assets",
+        priority: expect.stringMatching(/^(low|medium|high)$/),
+        category: "data_quality",
+        title: expect.any(String),
+        message: expect.stringContaining("建議"),
+        relatedAssetIds: ["old-cash"],
+      }),
+    );
   });
 
   it("cash / stock / loan 正確計算 totalAssets / totalLiabilities / netWorth", () => {
@@ -259,5 +315,125 @@ describe("deterministic asset report", () => {
     expect(reportText).not.toContain("JWT");
     expect(reportText).not.toContain("token");
     expect(getReportAssetType(JSON.parse(reportText), "cash").valueTwd).toBeGreaterThan(0);
+  });
+
+  it("AI-ready JSON export 包含 deterministic report summary 與安全 constraints", () => {
+    const report = buildAssetReport({
+      assets: assetsFixture,
+      financialGoals: financialGoalsFixture,
+      exchangeRates: exchangeRatesFixture,
+      generatedAt: FIXED_NOW,
+      now: new Date(FIXED_NOW),
+    });
+    const aiInput = buildAiReadyReportInput(report);
+
+    expect(aiInput).toEqual(
+      expect.objectContaining({
+        schemaVersion: 1,
+        purpose: "asset-agent-ai-report-input",
+        language: "zh-TW",
+        financialSummary: expect.objectContaining({
+          netWorthTwd: report.summary.netWorthTwd,
+          totalAssetsTwd: report.summary.totalAssetsTwd,
+        }),
+        riskSummary: expect.objectContaining({
+          riskFlags: expect.any(Array),
+          actionItems: expect.any(Array),
+        }),
+        constraints: expect.objectContaining({
+          doNotProvideBuySellInstructions: true,
+          doNotInferMissingMarketPrices: true,
+          askForConfirmationBeforeHighImpactAdvice: true,
+        }),
+      }),
+    );
+  });
+
+  it("AI-ready JSON export 不包含 Access token / JWT / secret / ACCESS env 實際值或交易指令", () => {
+    const aiInputText = JSON.stringify(
+      buildAiReadyReportInput(
+        buildAssetReport({
+          assets: assetsFixture,
+          financialGoals: financialGoalsFixture,
+          exchangeRates: exchangeRatesFixture,
+          generatedAt: FIXED_NOW,
+          now: new Date(FIXED_NOW),
+        }),
+      ),
+    );
+
+    expect(aiInputText).not.toContain("ACCESS_AUD");
+    expect(aiInputText).not.toContain("ACCESS_TEAM_DOMAIN");
+    expect(aiInputText).not.toContain("Cf-Access-Jwt-Assertion");
+    expect(aiInputText).not.toContain("JWT");
+    expect(aiInputText).not.toContain("token");
+    expect(aiInputText).not.toMatch(/buy\s+\w+/i);
+    expect(aiInputText).not.toMatch(/sell\s+\w+/i);
+  });
+
+  it("Markdown export 可產生人類可讀章節與 disclaimer", () => {
+    const markdown = buildMarkdownAssetReport(
+      buildAssetReport({
+        assets: assetsFixture,
+        financialGoals: financialGoalsFixture,
+        exchangeRates: exchangeRatesFixture,
+        generatedAt: FIXED_NOW,
+        now: new Date(FIXED_NOW),
+      }),
+    );
+
+    expect(markdown).toContain("# Asset Agent 規則型資產報告");
+    expect(markdown).toContain("## 資產摘要");
+    expect(markdown).toContain("## 風險提示");
+    expect(markdown).toContain("## 待處理事項");
+    expect(markdown).toContain("## 資料品質");
+    expect(markdown).toContain("## Disclaimer");
+    expect(markdown).toContain("未使用 AI");
+    expect(markdown).toContain("不構成投資建議");
+  });
+
+  it("local mode / Cloud Mode report export 都可正常帶入來源與 snapshot metadata", () => {
+    const localReport = buildAssetReport({
+      assets: assetsFixture,
+      financialGoals: financialGoalsFixture,
+      exchangeRates: exchangeRatesFixture,
+      dataSourceMode: "localStorage",
+      cloudMode: false,
+      generatedAt: FIXED_NOW,
+      now: new Date(FIXED_NOW),
+    });
+    const cloudReport = buildAssetReport({
+      assets: assetsFixture,
+      financialGoals: financialGoalsFixture,
+      exchangeRates: exchangeRatesFixture,
+      snapshots: [{ id: "snapshot", createdAt: "2026-06-15T12:00:00.000Z" }],
+      dataSourceMode: "cloudflare-d1",
+      cloudMode: true,
+      generatedAt: FIXED_NOW,
+      now: new Date(FIXED_NOW),
+    });
+
+    expect(buildAiReadyReportInput(localReport).source).toEqual(expect.objectContaining({ dataSourceMode: "localStorage" }));
+    expect(buildAiReadyReportInput(cloudReport).source).toEqual(
+      expect.objectContaining({
+        dataSourceMode: "cloudflare-d1",
+        cloudMode: true,
+        latestSnapshotAt: "2026-06-15T12:00:00.000Z",
+      }),
+    );
+  });
+
+  it("空 assets 仍可 export AI-ready JSON / Markdown，不 crash", () => {
+    const report = buildAssetReport({
+      assets: [],
+      financialGoals: financialGoalsFixture,
+      exchangeRates: exchangeRatesFixture,
+      generatedAt: FIXED_NOW,
+      now: new Date(FIXED_NOW),
+    });
+
+    expect(buildAiReadyReportInput(report).financialSummary.totalAssetsTwd).toBe(0);
+    expect(buildMarkdownAssetReport(report)).toContain("總資產：TWD 0");
+    expect(buildMarkdownAssetReport(report)).toContain("不構成投資建議");
   });
 });

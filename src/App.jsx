@@ -48,7 +48,23 @@ import {
   getDefaultDataSourceMode,
   setStoredDataSourceMode,
 } from "./data/dataSource.js";
-import { buildAssetReport } from "./report/buildAssetReport.js";
+import { buildAiReadyReportInput, buildAssetReport, buildMarkdownAssetReport } from "./report/buildAssetReport.js";
+
+const REPORT_SEVERITY_LABELS = {
+  info: "Info",
+  warning: "Warning",
+  critical: "Critical",
+};
+
+const REPORT_ACTION_CATEGORY_LABELS = {
+  data_quality: "資料品質",
+  risk_control: "風險控管",
+  market_price_update: "市價更新",
+  backup: "備份 / snapshot",
+  review: "其他",
+};
+
+const REPORT_ACTION_CATEGORY_ORDER = ["data_quality", "risk_control", "market_price_update", "backup", "review"];
 
 function getTodayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -545,6 +561,16 @@ function getAssetReportFileName(report) {
   return `asset-agent-report-${date}.json`;
 }
 
+function getAiReadyReportFileName(report) {
+  const date = String(report?.generatedAt || new Date().toISOString()).slice(0, 10);
+  return `asset-agent-ai-ready-report-${date}.json`;
+}
+
+function getMarkdownReportFileName(report) {
+  const date = String(report?.generatedAt || new Date().toISOString()).slice(0, 10);
+  return `asset-agent-report-${date}.md`;
+}
+
 function getSnapshotReasonLabel(reason) {
   if (reason === "before_cloud_import") return "匯入前";
   if (reason === "before_restore") return "還原前";
@@ -749,7 +775,15 @@ function App() {
     [assetReportGeneratedAt, assets, cloudSnapshots, exchangeRates, financialGoals, isCloudMode],
   );
   const assetReportRiskPreview = assetReport.riskFlags.slice(0, 4);
-  const assetReportActionPreview = assetReport.actionItems.slice(0, 5);
+  const assetReportActionGroups = useMemo(
+    () =>
+      REPORT_ACTION_CATEGORY_ORDER.map((category) => ({
+        category,
+        label: REPORT_ACTION_CATEGORY_LABELS[category],
+        items: assetReport.actionItems.filter((item) => (item.category ?? "review") === category),
+      })).filter((group) => group.items.length > 0),
+    [assetReport.actionItems],
+  );
 
   const refreshCloudSnapshots = useCallback(
     async ({ quiet = false } = {}) => {
@@ -1491,6 +1525,18 @@ function App() {
   function downloadAssetReportJson() {
     downloadTextFile(JSON.stringify(assetReport, null, 2), getAssetReportFileName(assetReport), "application/json");
     setDataToolStatus("已下載資產報告 JSON。");
+  }
+
+  function downloadAiReadyReportJson() {
+    const payload = buildAiReadyReportInput(assetReport);
+
+    downloadTextFile(JSON.stringify(payload, null, 2), getAiReadyReportFileName(assetReport), "application/json");
+    setDataToolStatus("已下載 AI-ready JSON；沒有呼叫 AI，也沒有上傳外部服務。");
+  }
+
+  function downloadMarkdownAssetReport() {
+    downloadTextFile(buildMarkdownAssetReport(assetReport), getMarkdownReportFileName(assetReport), "text/markdown;charset=utf-8");
+    setDataToolStatus("已下載 Markdown 資產報告。");
   }
 
   function downloadCsvTemplate() {
@@ -2243,8 +2289,9 @@ function App() {
           <div className="asset-report-body">
             <div className="asset-report-header">
               <div>
-                <strong>Deterministic asset report</strong>
+                <strong>規則型資產報告</strong>
                 <small>
+                  Deterministic report，不使用 AI ·{" "}
                   產生時間：{formatDateTime(assetReport.generatedAt)} · 來源：
                   {assetReport.source.cloudMode ? "Cloudflare D1" : "localStorage"}
                 </small>
@@ -2255,6 +2302,12 @@ function App() {
                 </button>
                 <button className="ghost-button secondary-action" type="button" onClick={downloadAssetReportJson}>
                   下載報告 JSON
+                </button>
+                <button className="ghost-button secondary-action" type="button" onClick={downloadAiReadyReportJson}>
+                  下載 AI-ready JSON
+                </button>
+                <button className="ghost-button secondary-action" type="button" onClick={downloadMarkdownAssetReport}>
+                  下載 Markdown 報告
                 </button>
               </div>
             </div>
@@ -2329,7 +2382,11 @@ function App() {
                 ) : (
                   <ul className="report-chip-list">
                     {assetReportRiskPreview.map((item) => (
-                      <li key={item.code}>{item.label}</li>
+                      <li key={item.id ?? item.code}>
+                        <span className="report-chip-label">{REPORT_SEVERITY_LABELS[item.severity] ?? "Info"}</span>
+                        <strong>{item.title ?? item.label}</strong>
+                        <span>{item.message ?? item.label}</span>
+                      </li>
                     ))}
                   </ul>
                 )}
@@ -2340,14 +2397,25 @@ function App() {
                   <strong>待處理事項</strong>
                   <small>{assetReport.actionItems.length} 項 action items</small>
                 </div>
-                {assetReportActionPreview.length === 0 ? (
+                {assetReportActionGroups.length === 0 ? (
                   <p className="muted">目前沒有明顯待處理事項。</p>
                 ) : (
-                  <ul className="report-chip-list">
-                    {assetReportActionPreview.map((item) => (
-                      <li key={`${item.code}-${item.label}`}>{item.label}</li>
+                  <div className="report-action-groups">
+                    {assetReportActionGroups.map((group) => (
+                      <div className="report-action-group" key={group.category}>
+                        <span>{group.label}</span>
+                        <ul className="report-chip-list">
+                          {group.items.slice(0, 4).map((item) => (
+                            <li key={`${item.id ?? item.code}-${item.label}`}>
+                              <span className="report-chip-label">{item.priority ?? "medium"}</span>
+                              <strong>{item.title ?? item.label}</strong>
+                              <span>{item.message ?? item.label}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
                     ))}
-                  </ul>
+                  </div>
                 )}
               </article>
 
@@ -2379,7 +2447,7 @@ function App() {
               <article className="asset-report-card">
                 <div>
                   <strong>Snapshot 狀態</strong>
-                  <small>{assetReport.source.cloudMode ? "Cloud Mode D1 snapshot metadata" : "local mode 不適用 D1 snapshot"}</small>
+                  <small>{assetReport.source.cloudMode ? "Cloud Mode · D1 snapshot metadata" : "local mode · 不適用 D1 snapshot"}</small>
                 </div>
                 <div className="report-list">
                   <div>
@@ -2397,7 +2465,7 @@ function App() {
             </div>
 
             <p className="asset-report-note">
-              本報告只依目前已載入資料即時計算，不呼叫 AI、不寫入 D1、不提供投資買賣建議。
+              本報告為規則型摘要，未使用 AI，不構成投資建議；資料來源為目前 App 已載入資料。
             </p>
           </div>
         )}

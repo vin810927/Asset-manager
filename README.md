@@ -13,6 +13,7 @@
 - v1.2 新增 D1 snapshot / 雲端備份安全層，可手動建立、下載與 guarded restore
 - v1.3 新增 Cloud Mode 寫入前 stale data guard，避免覆蓋其他裝置已更新的 D1 資料
 - v1.4 新增 deterministic asset report foundation，提供規則型摘要、風險旗標與資料品質檢查
+- v1.5 優化 deterministic report UX，並新增 AI-ready JSON 與 Markdown report export
 - Cloud Mode 不是自動雙向同步；手機與電腦共用 D1 資料，但需要重新整理或重新讀取才會看到另一端變更
 - 支援資產類型：
   - 現金
@@ -40,7 +41,7 @@
 - 支援 Asset Agent 標準 CSV 匯出、CSV 範本下載與匯入 preview
 - 支援新增表單與 CSV 匯入共用的資料驗證，error 會阻止寫入，warning 需在頁面內人工確認
 - 資產明細會以低飽和 badge 標示幣別待確認、高集中與資料過期
-- 資產報告可即時計算並下載 JSON；報告未使用 AI，也不會寫入 D1
+- 資產報告可即時計算並下載 deterministic JSON、AI-ready JSON 與 Markdown；報告未使用 AI，也不會寫入 D1
 - 新增貸款時需輸入：
   - 貸款名稱
   - 本金
@@ -87,9 +88,9 @@ v1.2 已加入 D1 snapshot / cloud backup safety layer。Snapshot 內容包含�
 
 v1.3 的 stale data guard 是輕量 changed-elsewhere 防呆：Cloud Mode 載入時記錄 D1 revision，新增、編輯、刪除、理財目標、匯率、snapshot restore 與 JSON replace cloud copy 前會重新檢查 revision；若 D1 已被其他裝置或頁面更新，本次寫入會被阻止，畫面不會先更新，也不會改 localStorage。使用者需要按「重新整理雲端資料」後再修改。
 
-v1.4 新增 deterministic asset report foundation。Report 只從目前 App 已載入的 assets、financialGoals、exchangeRates 與 snapshot metadata 即時計算，包含淨資產、類別配置、幣別曝險、集中度、緊急預備金、stale assets、待處理事項與資料品質。Report 可下載 JSON，未使用 AI、不呼叫任何 AI API、不寫入 D1，也不是投資建議。未來 AI report 會以 deterministic report 作為穩定 input，而不是直接吃 raw assets。
+v1.5 延續 deterministic asset report foundation。Report 只從目前 App 已載入的 assets、financialGoals、exchangeRates 與 snapshot metadata 即時計算，包含淨資產、類別配置、幣別曝險、集中度、緊急預備金、stale assets、待處理事項與資料品質。Report 可下載 deterministic JSON、AI-ready JSON 與 Markdown，未使用 AI、不呼叫任何 AI API、不寫入 D1，也不是投資建議。未來 AI narrative report 會以 AI-ready JSON 作為 input，而不是直接吃 raw assets。
 
-v1.4 仍不做自動雙向同步、merge、override、background sync、offline queue、完整 conflict resolution、scheduled report、scheduled snapshot 或 notification；agent report 仍留待後續版本。
+v1.5 仍不做自動雙向同步、merge、override、background sync、offline queue、完整 conflict resolution、scheduled report、scheduled snapshot、email、notification 或 PDF；agent report 仍留待後續版本。
 
 ## 技術棧
 
@@ -490,7 +491,7 @@ v1.3 Cloud Mode：
 
 ## Deterministic asset report
 
-v1.4 新增 `src/report/buildAssetReport.js`。這是一個純前端、規則型 report builder，輸入目前 App 已載入的 `assets`、`financialGoals`、`exchangeRates` 與 Cloud Mode 已載入的 snapshot metadata，輸出 schema version 1 的 JSON：
+v1.5 的 report builder 位於 `src/report/buildAssetReport.js`。這是一個純前端、規則型 report builder，輸入目前 App 已載入的 `assets`、`financialGoals`、`exchangeRates` 與 Cloud Mode 已載入的 snapshot metadata，輸出 schema version 1 的 deterministic JSON：
 
 ```js
 {
@@ -536,7 +537,40 @@ v1.4 新增 `src/report/buildAssetReport.js`。這是一個純前端、規則型
 }
 ```
 
-Report 規則沿用既有 `utils.js` 的淨值、曝險、集中度、stale asset 與 financial goals 計算。`monthlyLivingExpense` 依目前 UI 定義視為 TWD 金額，因此 emergency fund months = `cashTwd / monthlyLivingExpense`。Report 不呼叫 AI、不需要 API key、不做投資買賣建議、不寫入 D1、不建立 report table；使用者可在 UI 重新產生並下載 JSON。
+`riskFlags` 在 v1.5 採用下列 schema，並保留 `code` / `label` 作為相容欄位：
+
+```js
+{
+  id: "single-holding-concentration",
+  severity: "info | warning | critical",
+  category: "allocation | concentration | debt | stale_data | data_quality | backup",
+  title: "單一標的集中度偏高",
+  message: "需要人工檢視的規則型說明",
+  relatedAssetIds: []
+}
+```
+
+`actionItems` 在 v1.5 採用下列 schema，並依 UI 分為資料品質、風險控管、市價更新、備份 / snapshot、其他：
+
+```js
+{
+  id: "stale-assets",
+  priority: "low | medium | high",
+  category: "data_quality | risk_control | market_price_update | backup | review",
+  title: "更新過期資產資料",
+  message: "建議確認資料後再判讀報告",
+  relatedAssetIds: []
+}
+```
+
+Report 規則沿用既有 `utils.js` 的淨值、曝險、集中度、stale asset 與 financial goals 計算。`monthlyLivingExpense` 依目前 UI 定義視為 TWD 金額，因此 emergency fund months = `cashTwd / monthlyLivingExpense`。
+
+v1.5 新增兩種 export：
+
+- AI-ready JSON：`purpose: "asset-agent-ai-report-input"`，包含 `financialSummary`、`allocationSummary`、`riskSummary`、`dataQuality` 與 constraints。這只是未來 AI narrative report 的結構化 input，不呼叫 AI、不上傳外部服務、不包含 Access token / secret。
+- Markdown report：人類可讀的資產摘要、配置摘要、幣別曝險、風險提示、待處理事項、資料品質、snapshot 狀態與 disclaimer。
+
+Report 不呼叫 AI、不需要 API key、不做投資買賣建議、不寫入 D1、不建立 report table，也不產生 PDF；使用者可在 UI 重新產生並下載 JSON / AI-ready JSON / Markdown。
 
 ## 資料驗證規則
 

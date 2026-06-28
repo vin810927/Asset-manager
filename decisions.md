@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-06-28：v1.5 優化 deterministic report UX 與 AI-ready export
+
+### 決策
+v1.5 保留 v1.4 的 deterministic report foundation，但將 UI 中文化為「規則型資產報告」，並把 `riskFlags` 與 `actionItems` 整理成更穩定、可讀的 schema。`riskFlags` 具備 `id`、`severity`、`category`、`title`、`message` 與 `relatedAssetIds`；`actionItems` 具備 `id`、`priority`、`category`、`title`、`message` 與 `relatedAssetIds`。為避免破壞舊 UI 與測試，仍保留 `code` / `label` 相容欄位。
+
+新增兩個純前端 export helper：`buildAiReadyReportInput(report)` 與 `buildMarkdownAssetReport(report)`。AI-ready JSON 只把 deterministic report 轉成未來 AI narrative report 可使用的穩定 input schema；Markdown report 則供人類直接閱讀與保存。
+
+### 理由
+- 未來 AI narrative report 需要穩定、去除 UI 雜訊的 input，而不是直接讀 raw assets 或任意 UI text
+- 在還沒接 AI API 前，先把風險旗標、待處理事項分類與 disclaimer 固定，可以降低後續 prompt / agent pipeline 的不確定性
+- Markdown export 可支援人工審閱與記錄，不需要引入 PDF 或後端 report 儲存
+
+### 限制
+v1.5 不呼叫 AI、不新增 OpenAI API key、不新增 secret、不做投資買賣建議、不新增後端 report API、不寫入 D1、不新增 D1 table 或 migration、不做 scheduled report、scheduled snapshot、email、notification、PDF、自動雙向同步、background sync、offline queue、merge、conflict resolution 或 rollback。
+
+---
+
 ## 2026-06-27：v1.4 新增 deterministic asset report foundation
 
 ### 決策

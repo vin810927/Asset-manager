@@ -493,6 +493,11 @@ h2 {
   min-width: 0;
 }
 
+.asset-report-card > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
 .report-list {
   display: grid;
   gap: 7px;
@@ -518,6 +523,8 @@ h2 {
 }
 
 .report-chip-list li {
+  display: grid;
+  gap: 3px;
   border: 1px solid var(--warning-border);
   border-radius: 12px;
   background: var(--warning-bg);
@@ -526,6 +533,28 @@ h2 {
   font-size: 0.8rem;
   font-weight: 800;
   line-height: 1.35;
+}
+
+.report-chip-list strong,
+.report-chip-list span {
+  display: block;
+}
+
+.report-chip-label,
+.report-action-group > span {
+  color: var(--soft-text);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.report-action-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.report-action-group {
+  display: grid;
+  gap: 6px;
 }
 
 .data-tools-body {
