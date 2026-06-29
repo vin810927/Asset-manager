@@ -26,6 +26,8 @@ import {
 const REPORT_SCHEMA_VERSION = 1;
 const AI_READY_SCHEMA_VERSION = 1;
 const ASSET_TYPE_VALUES = ASSET_TYPES.map((item) => item.value);
+const MONTHLY_EXPENSE_LEGACY_TEN_THOUSAND_THRESHOLD = 1000;
+const TEN_THOUSAND_TWD = 10000;
 
 const ACTION_CATEGORY_BY_ATTENTION_KEY = {
   empty: "review",
@@ -267,11 +269,30 @@ function getSummaryByType(allocationByType) {
   };
 }
 
+function getEmergencyFundExpenseBasis(financialGoals) {
+  const rawMonthlyLivingExpense = Math.max(0, toNumber(financialGoals.monthlyLivingExpense));
+  const usesLegacyTenThousandInput =
+    rawMonthlyLivingExpense > 0 && rawMonthlyLivingExpense < MONTHLY_EXPENSE_LEGACY_TEN_THOUSAND_THRESHOLD;
+  const monthlyLivingExpenseTwd = usesLegacyTenThousandInput
+    ? rawMonthlyLivingExpense * TEN_THOUSAND_TWD
+    : rawMonthlyLivingExpense;
+
+  return {
+    rawMonthlyLivingExpense: roundNumber(rawMonthlyLivingExpense),
+    monthlyLivingExpenseTwd: roundNumber(monthlyLivingExpenseTwd),
+    unit: usesLegacyTenThousandInput ? "ten-thousand-twd" : "TWD",
+    unitLabel: usesLegacyTenThousandInput ? "萬元 TWD（相容換算）" : "TWD",
+    unitAssumption: usesLegacyTenThousandInput ? "legacy-ten-thousand-input" : "stored-twd",
+    usesLegacyTenThousandInput,
+  };
+}
+
 function getReportRiskAndActions({
   assetList,
   attentionItems,
   concentrationItems,
   dataQuality,
+  emergencyFundExpenseBasis,
   financialGoals,
   goalMetrics,
   latestSnapshotAt,
@@ -332,12 +353,34 @@ function getReportRiskAndActions({
     );
   }
 
+  if (emergencyFundExpenseBasis.usesLegacyTenThousandInput) {
+    actionItems.push(
+      createActionItem({
+        id: "monthly-living-expense-unit-check",
+        priority: "medium",
+        category: "data_quality",
+        title: "確認每月生活費單位",
+        message: `每月生活費原始值 ${formatNumber(
+          emergencyFundExpenseBasis.rawMonthlyLivingExpense,
+        )} 已在報告中視為 ${formatNumber(
+          emergencyFundExpenseBasis.rawMonthlyLivingExpense,
+        )} 萬 TWD（${BASE_CURRENCY} ${formatNumber(
+          emergencyFundExpenseBasis.monthlyLivingExpenseTwd,
+        )}）；建議確認理財目標是否應輸入完整 TWD 金額。`,
+      }),
+    );
+  }
+
   if (goalMetrics.emergencyTarget > 0 && goalMetrics.cashValueTwd < goalMetrics.emergencyTarget) {
     const emergencyFundMonths =
-      financialGoals.monthlyLivingExpense > 0 ? goalMetrics.cashValueTwd / financialGoals.monthlyLivingExpense : 0;
+      emergencyFundExpenseBasis.monthlyLivingExpenseTwd > 0
+        ? goalMetrics.cashValueTwd / emergencyFundExpenseBasis.monthlyLivingExpenseTwd
+        : 0;
     const message = `目前約 ${formatNumber(emergencyFundMonths)} 個月，低於目標 ${formatNumber(
       financialGoals.emergencyMonths,
-    )} 個月；建議確認現金水位與生活費設定。`;
+    )} 個月；每月生活費以 ${BASE_CURRENCY} ${formatNumber(
+      emergencyFundExpenseBasis.monthlyLivingExpenseTwd,
+    )} 計算，建議確認現金水位與生活費設定。`;
 
     riskFlags.push(
       createRiskFlag({
@@ -448,17 +491,45 @@ export function buildAssetReport({
   const typeSummary = getSummaryByType(allocationByType);
   const concentrationItems = getConcentrationItems({ assets: assetList, exchangeRates: rates, financialGoals: goals });
   const staleAssets = getStaleAssets(assetList, goals, now);
-  const dataQuality = getDataQuality(assetList, rates, goals, now, currencySummary);
+  const emergencyFundExpenseBasis = getEmergencyFundExpenseBasis(goals);
+  const reportGoalMetrics = {
+    ...goalMetrics,
+    emergencyTarget: emergencyFundExpenseBasis.monthlyLivingExpenseTwd * goals.emergencyMonths,
+  };
+  const dataQuality = {
+    ...getDataQuality(assetList, rates, goals, now, currencySummary),
+    monthlyLivingExpense: {
+      rawValue: emergencyFundExpenseBasis.rawMonthlyLivingExpense,
+      amountTwd: emergencyFundExpenseBasis.monthlyLivingExpenseTwd,
+      unit: emergencyFundExpenseBasis.unit,
+      unitLabel: emergencyFundExpenseBasis.unitLabel,
+      unitAssumption: emergencyFundExpenseBasis.unitAssumption,
+    },
+    monthlyLivingExpenseWarnings: emergencyFundExpenseBasis.usesLegacyTenThousandInput
+      ? [
+          {
+            key: "monthly-living-expense-unit",
+            label: `每月生活費 ${formatNumber(
+              emergencyFundExpenseBasis.rawMonthlyLivingExpense,
+            )} 已以萬元相容格式估算；建議確認單位。`,
+          },
+        ]
+      : [],
+  };
   const latestSnapshotAt = cloudMode ? getLatestSnapshotAt(snapshots) : null;
   const attentionItems = buildAttentionItems({ assets: assetList, exchangeRates: rates, financialGoals: goals, now });
-  const emergencyFundMonths = goals.monthlyLivingExpense > 0 ? goalMetrics.cashValueTwd / goals.monthlyLivingExpense : 0;
+  const emergencyFundMonths =
+    emergencyFundExpenseBasis.monthlyLivingExpenseTwd > 0
+      ? goalMetrics.cashValueTwd / emergencyFundExpenseBasis.monthlyLivingExpenseTwd
+      : 0;
   const { riskFlags, actionItems } = getReportRiskAndActions({
     assetList,
     attentionItems,
     concentrationItems,
     dataQuality,
+    emergencyFundExpenseBasis,
     financialGoals: goals,
-    goalMetrics,
+    goalMetrics: reportGoalMetrics,
     latestSnapshotAt,
     cloudMode,
     staleAssets,
@@ -487,6 +558,11 @@ export function buildAssetReport({
       debtRatioPercent: roundNumber(goalMetrics.debtRatioPercent),
       emergencyFundMonths: roundNumber(emergencyFundMonths),
       emergencyFundTargetMonths: roundNumber(goals.emergencyMonths),
+      emergencyFundMonthlyExpenseRaw: emergencyFundExpenseBasis.rawMonthlyLivingExpense,
+      emergencyFundMonthlyExpenseTwd: emergencyFundExpenseBasis.monthlyLivingExpenseTwd,
+      emergencyFundUnit: emergencyFundExpenseBasis.unit,
+      emergencyFundUnitLabel: emergencyFundExpenseBasis.unitLabel,
+      emergencyFundTargetTwd: roundNumber(reportGoalMetrics.emergencyTarget),
     },
     riskFlags,
     actionItems,
@@ -520,7 +596,11 @@ export function buildAssetReport({
       usesAi: false,
       writesToD1: false,
       assetValueBasis: "existing-app-logic",
-      emergencyFundUnit: "TWD",
+      emergencyFundUnit: emergencyFundExpenseBasis.unit,
+      emergencyFundUnitLabel: emergencyFundExpenseBasis.unitLabel,
+      emergencyFundMonthlyExpenseRaw: emergencyFundExpenseBasis.rawMonthlyLivingExpense,
+      emergencyFundMonthlyExpenseTwd: emergencyFundExpenseBasis.monthlyLivingExpenseTwd,
+      emergencyFundUnitAssumption: emergencyFundExpenseBasis.unitAssumption,
       missingCurrencyCount: twdSummary.missingCurrencies.length,
       totalNativeAssetAmount: roundNumber(assetList.reduce((total, asset) => total + Math.max(0, getAssetAmount(asset)), 0)),
       riskAssetTypes: ASSET_TYPE_VALUES.filter((type) => isRiskAssetType(type)),
@@ -581,6 +661,7 @@ export function buildAiReadyReportInput(report) {
       })),
     },
     dataQuality: safeReport.dataQuality ?? {},
+    reportMetadata: safeReport.metadata ?? {},
     constraints: {
       doNotProvideBuySellInstructions: true,
       doNotInferMissingMarketPrices: true,
@@ -591,6 +672,17 @@ export function buildAiReadyReportInput(report) {
 
 function formatReportTwd(value) {
   return `TWD ${formatNumber(value)}`;
+}
+
+function formatEmergencyFundMonthlyExpense(allocation = {}) {
+  const amountTwd = allocation.emergencyFundMonthlyExpenseTwd ?? 0;
+  const rawValue = allocation.emergencyFundMonthlyExpenseRaw ?? amountTwd;
+
+  if (allocation.emergencyFundUnit === "ten-thousand-twd") {
+    return `每月生活費以 ${formatNumber(rawValue)} 萬 TWD 相容換算（${formatReportTwd(amountTwd)}）`;
+  }
+
+  return `每月生活費以 ${formatReportTwd(amountTwd)} 計算`;
 }
 
 function formatReportPercent(value) {
@@ -634,6 +726,7 @@ export function buildMarkdownAssetReport(report) {
     `- 總資產：${formatReportTwd(summary.totalAssetsTwd)}`,
     `- 總負債：${formatReportTwd(summary.totalLiabilitiesTwd)}`,
     `- 緊急預備金：約 ${formatNumber(allocation.emergencyFundMonths)} 個月`,
+    `- ${formatEmergencyFundMonthlyExpense(allocation)}`,
     "",
     "## 配置摘要",
     formatMarkdownList(typeLines, "尚無可用配置資料。"),

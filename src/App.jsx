@@ -2328,6 +2328,11 @@ function App() {
               <div>
                 <span>緊急預備金</span>
                 <strong>{formatNumber(assetReport.allocation.emergencyFundMonths)} 個月</strong>
+                <small>
+                  每月生活費：
+                  {formatCompactMoney(assetReport.allocation.emergencyFundMonthlyExpenseTwd, "TWD")}
+                  {assetReport.allocation.emergencyFundUnit === "ten-thousand-twd" ? "（萬元相容換算）" : ""}
+                </small>
               </div>
             </div>
 
@@ -3002,14 +3007,16 @@ function App() {
 
             <div className="goal-grid" aria-label="理財目標設定">
               <label>
-                每月生活費
+                每月生活費（TWD）
                 <input
                   type="number"
                   min="0"
+                  step="1000"
                   value={financialGoals.monthlyLivingExpense}
                   disabled={isSavingCloudSettings}
                   onChange={(event) => updateFinancialGoal("monthlyLivingExpense", toNumber(event.target.value))}
                 />
+                <small className="goal-unit-note">請輸入完整 TWD 金額，例如 50000 代表每月 5 萬元。</small>
               </label>
               <label>
                 緊急預備金月數

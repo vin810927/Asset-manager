@@ -518,7 +518,10 @@ v1.5 的 report builder 位於 `src/report/buildAssetReport.js`。這是一個�
     byCurrency: [],
     stockExposurePercent: 0,
     debtRatioPercent: 0,
-    emergencyFundMonths: 0
+    emergencyFundMonths: 0,
+    emergencyFundMonthlyExpenseRaw: 0,
+    emergencyFundMonthlyExpenseTwd: 0,
+    emergencyFundUnit: "TWD | ten-thousand-twd"
   },
   riskFlags: [],
   actionItems: [],
@@ -532,7 +535,13 @@ v1.5 的 report builder 位於 `src/report/buildAssetReport.js`。這是一個�
     missingMarketPriceCount: 0,
     staleMarketPriceCount: 0,
     missingTickerCount: 0,
-    duplicateNameWarnings: []
+    duplicateNameWarnings: [],
+    monthlyLivingExpense: {
+      rawValue: 0,
+      amountTwd: 0,
+      unit: "TWD | ten-thousand-twd",
+      unitAssumption: "stored-twd | legacy-ten-thousand-input"
+    }
   }
 }
 ```
@@ -563,7 +572,7 @@ v1.5 的 report builder 位於 `src/report/buildAssetReport.js`。這是一個�
 }
 ```
 
-Report 規則沿用既有 `utils.js` 的淨值、曝險、集中度、stale asset 與 financial goals 計算。`monthlyLivingExpense` 依目前 UI 定義視為 TWD 金額，因此 emergency fund months = `cashTwd / monthlyLivingExpense`。
+Report 規則沿用既有 `utils.js` 的淨值、曝險、集中度、stale asset 與 financial goals 計算。`monthlyLivingExpense` 的標準單位是 TWD，UI 會標示「每月生活費（TWD）」並建議輸入完整金額，例如 `50000` 代表每月 5 萬元。為了相容早期 UI 沒有明確標示單位時可能留下的舊資料，report builder 只在報告計算層將 `1..999` 這類小值視為「萬元簡寫」換算成 TWD，例如 `40` 會以 TWD 400,000 計算，並在 `metadata.emergencyFundUnit`、`allocation.emergencyFundUnit` 與 `dataQuality.monthlyLivingExpense` 標示 `ten-thousand-twd` / `legacy-ten-thousand-input`。這不會改 financialGoals schema，也不會自動轉換 localStorage 或 D1 中的既有資料。
 
 v1.5 新增兩種 export：
 

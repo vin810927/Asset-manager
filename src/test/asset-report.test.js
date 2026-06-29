@@ -196,7 +196,70 @@ describe("deterministic asset report", () => {
 
     expect(report.summary.cashTwd).toBe(150000);
     expect(report.allocation.emergencyFundMonths).toBe(3);
+    expect(report.allocation.emergencyFundMonthlyExpenseTwd).toBe(50000);
+    expect(report.metadata.emergencyFundUnit).toBe("TWD");
     expect(report.riskFlags.some((item) => item.code === "emergency-fund-shortfall")).toBe(true);
+  });
+
+  it("monthlyLivingExpense 小於 1000 時以萬元相容換算，避免產生荒謬緊急預備金月數", () => {
+    const report = buildAssetReport({
+      assets: [
+        {
+          id: "large-cash",
+          type: "cash",
+          currency: "TWD",
+          name: "現金",
+          amount: 4000000,
+          createdAt: FIXED_NOW,
+          updatedAt: FIXED_NOW,
+        },
+      ],
+      financialGoals: { ...financialGoalsFixture, monthlyLivingExpense: 40, emergencyMonths: 6 },
+      exchangeRates: exchangeRatesFixture,
+      generatedAt: FIXED_NOW,
+      now: new Date(FIXED_NOW),
+    });
+
+    expect(report.allocation.emergencyFundMonths).toBe(10);
+    expect(report.allocation.emergencyFundMonths).toBeLessThan(1000);
+    expect(report.allocation.emergencyFundMonthlyExpenseRaw).toBe(40);
+    expect(report.allocation.emergencyFundMonthlyExpenseTwd).toBe(400000);
+    expect(report.metadata.emergencyFundUnit).toBe("ten-thousand-twd");
+    expect(report.metadata.emergencyFundUnitAssumption).toBe("legacy-ten-thousand-input");
+    expect(report.dataQuality.monthlyLivingExpense.unit).toBe("ten-thousand-twd");
+    expect(report.actionItems.some((item) => item.code === "monthly-living-expense-unit-check")).toBe(true);
+  });
+
+  it("local mode / Cloud Mode 對 monthlyLivingExpense 萬元相容換算一致", () => {
+    const baseInput = {
+      assets: [
+        {
+          id: "cloud-cash",
+          type: "cash",
+          currency: "TWD",
+          name: "Cloud cash",
+          amount: 4000000,
+          createdAt: FIXED_NOW,
+          updatedAt: FIXED_NOW,
+        },
+      ],
+      financialGoals: { ...financialGoalsFixture, monthlyLivingExpense: 40, emergencyMonths: 6 },
+      exchangeRates: exchangeRatesFixture,
+      generatedAt: FIXED_NOW,
+      now: new Date(FIXED_NOW),
+    };
+    const localReport = buildAssetReport({ ...baseInput, dataSourceMode: "localStorage", cloudMode: false });
+    const cloudReport = buildAssetReport({
+      ...baseInput,
+      dataSourceMode: "cloudflare-d1",
+      cloudMode: true,
+      snapshots: [{ id: "snapshot", createdAt: "2026-06-15T12:00:00.000Z" }],
+    });
+
+    expect(localReport.allocation.emergencyFundMonths).toBe(10);
+    expect(cloudReport.allocation.emergencyFundMonths).toBe(10);
+    expect(cloudReport.source.cloudMode).toBe(true);
+    expect(cloudReport.metadata.emergencyFundUnit).toBe("ten-thousand-twd");
   });
 
   it("單一持股超過 singleHoldingLimitPercent 時產生 riskFlag", () => {
@@ -340,6 +403,9 @@ describe("deterministic asset report", () => {
           riskFlags: expect.any(Array),
           actionItems: expect.any(Array),
         }),
+        reportMetadata: expect.objectContaining({
+          emergencyFundUnit: "TWD",
+        }),
         constraints: expect.objectContaining({
           doNotProvideBuySellInstructions: true,
           doNotInferMissingMarketPrices: true,
@@ -347,6 +413,34 @@ describe("deterministic asset report", () => {
         }),
       }),
     );
+  });
+
+  it("AI-ready JSON / Markdown 的 emergency fund 單位顯示一致", () => {
+    const report = buildAssetReport({
+      assets: [
+        {
+          id: "large-cash",
+          type: "cash",
+          currency: "TWD",
+          name: "現金",
+          amount: 4000000,
+          createdAt: FIXED_NOW,
+          updatedAt: FIXED_NOW,
+        },
+      ],
+      financialGoals: { ...financialGoalsFixture, monthlyLivingExpense: 40, emergencyMonths: 6 },
+      exchangeRates: exchangeRatesFixture,
+      generatedAt: FIXED_NOW,
+      now: new Date(FIXED_NOW),
+    });
+    const aiInput = buildAiReadyReportInput(report);
+    const markdown = buildMarkdownAssetReport(report);
+
+    expect(aiInput.allocationSummary.emergencyFundMonths).toBe(10);
+    expect(aiInput.allocationSummary.emergencyFundMonthlyExpenseTwd).toBe(400000);
+    expect(aiInput.reportMetadata.emergencyFundUnit).toBe("ten-thousand-twd");
+    expect(markdown).toContain("緊急預備金：約 10 個月");
+    expect(markdown).toContain("每月生活費以 40 萬 TWD 相容換算");
   });
 
   it("AI-ready JSON export 不包含 Access token / JWT / secret / ACCESS env 實際值或交易指令", () => {

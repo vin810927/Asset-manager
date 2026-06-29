@@ -466,6 +466,7 @@ h2 {
 }
 
 .asset-report-summary-grid span,
+.asset-report-summary-grid small,
 .asset-report-card small,
 .report-list span {
   color: var(--soft-text);
@@ -1581,6 +1582,13 @@ label {
   color: var(--muted);
   font-size: 0.88rem;
   font-weight: 700;
+}
+
+.goal-unit-note {
+  color: var(--soft-text);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.35;
 }
 
 input,

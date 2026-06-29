@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-06-29：v1.5.1 修正 report 緊急預備金生活費單位
+
+### 決策
+`financialGoals.monthlyLivingExpense` 的標準單位維持 TWD，不改 schema、不改 localStorage / D1 既有資料，也不做 migration。UI 將欄位標示為「每月生活費（TWD）」並提示需輸入完整 TWD 金額，例如 `50000` 代表每月 5 萬元。
+
+為了相容早期 UI 未明確標示單位時可能留下的資料，deterministic report builder 在報告計算層新增 emergency fund expense basis：當 `monthlyLivingExpense` 大於 0 且小於 1000 時，只在 report 內視為「萬元簡寫」並換算成 TWD，例如 `40` 會以 TWD 400,000 計算。Report 會在 `allocation`、`metadata` 與 `dataQuality.monthlyLivingExpense` 標示原始值、換算後 TWD 值、`emergencyFundUnit` 與 `unitAssumption`，並產生一筆資料品質 action item 要求人工確認單位。
+
+### 理由
+- v1.4 / v1.5 report 直接用 `cashTwd / monthlyLivingExpense`，當 Cloud Mode 舊資料為 `40` 時會被視為 TWD 40 元，導致緊急預備金顯示數萬個月
+- 直接改 schema 或自動轉換 D1 既有資料風險較高，也會超出 hotfix 範圍
+- 在 report 層做相容換算並明確標示單位，可避免荒謬輸出，同時保留使用者人工確認與後續手動修正空間
+
+### 限制
+v1.5.1 不呼叫 AI、不新增 API key、不改 D1 schema、不新增 migration、不寫入 D1、不改 Cloudflare Dashboard、不做投資建議、不做自動同步或 conflict resolution。`1..999` 的萬元簡寫判定只用於 report 計算與顯示，不會自動修改已儲存的 financialGoals。
+
+---
+
 ## 2026-06-28：v1.5 優化 deterministic report UX 與 AI-ready export
 
 ### 決策

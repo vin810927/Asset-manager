@@ -99,3 +99,4 @@
 - [x] v1.5：優化 deterministic report UX，中文化標題、風險分級與待處理事項分類
 - [x] v1.5：新增 AI-ready JSON export，作為未來 AI narrative report 的穩定 input
 - [x] v1.5：新增 Markdown report export；仍不呼叫 AI、不寫入 D1、不做 scheduled report
+- [x] v1.5.1：修正 report 緊急預備金每月生活費單位提示與萬元簡寫相容換算
