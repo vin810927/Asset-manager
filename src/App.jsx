@@ -54,8 +54,10 @@ import {
 } from "./data/dataSource.js";
 import { buildAiReadyReportInput, buildAssetReport, buildMarkdownAssetReport } from "./report/buildAssetReport.js";
 import {
+  copyGptAnalysisPrompt,
   copyAiReportMarkdown,
   getAiNarrativeReportFileName,
+  isAiNarrativeReportUiEnabled,
   requestAiNarrativeReport,
 } from "./report/aiNarrativeReport.js";
 
@@ -74,6 +76,7 @@ const REPORT_ACTION_CATEGORY_LABELS = {
 };
 
 const REPORT_ACTION_CATEGORY_ORDER = ["data_quality", "risk_control", "market_price_update", "backup", "review"];
+const IS_AI_NARRATIVE_REPORT_UI_ENABLED = isAiNarrativeReportUiEnabled();
 
 const FINANCIAL_GOAL_INPUTS = [
   {
@@ -1676,6 +1679,15 @@ function App() {
     setDataToolStatus("已下載 Markdown 資產報告。");
   }
 
+  async function copyGptReportPrompt() {
+    try {
+      await copyGptAnalysisPrompt(assetReport);
+      setDataToolStatus("已複製 GPT 分析提示詞；沒有呼叫 AI，也沒有上傳外部服務。");
+    } catch (error) {
+      setDataToolStatus(error.message || "複製 GPT 分析提示詞失敗。");
+    }
+  }
+
   async function generateAiNarrativeReport() {
     setAiReportState((current) => ({
       ...current,
@@ -2190,27 +2202,26 @@ function App() {
         </article>
       </section>
 
-      <section className="exchange-shell">
-        <div className="panel exchange-trigger">
-          <div className="exchange-trigger-copy">
+      <section className="exchange-shell exchange-rate-section">
+        <div className="panel exchange-rate-header">
+          <div className="exchange-rate-title">
             <strong>匯率</strong>
             <span>資料時間：{formatDateTime(exchangeRates.sourceUpdatedAt)}</span>
           </div>
-          <div className="exchange-actions">
-            {isExchangePanelOpen && (
-              <button
-                className="icon-button"
-                type="button"
-                aria-label="更新最新匯率"
-                title="更新最新匯率"
-                onClick={updateLatestExchangeRates}
-                disabled={isFetchingRates || isSavingCloudSettings}
-              >
-                {isFetchingRates ? <LoadingIcon /> : <RefreshIcon />}
-              </button>
-            )}
+          <div className="exchange-rate-actions">
             <button
-              className="icon-button"
+              className="exchange-rate-update-button secondary-action"
+              type="button"
+              aria-label="線上更新匯率"
+              title="線上更新匯率"
+              onClick={updateLatestExchangeRates}
+              disabled={isFetchingRates || isSavingCloudSettings}
+            >
+              {isFetchingRates && <LoadingIcon />}
+              <span>{isFetchingRates ? "更新中..." : "更新匯率"}</span>
+            </button>
+            <button
+              className="icon-button exchange-rate-toggle-button"
               type="button"
               aria-label={isExchangePanelOpen ? "隱藏匯率" : "顯示匯率"}
               title={isExchangePanelOpen ? "隱藏匯率" : "顯示匯率"}
@@ -2223,7 +2234,7 @@ function App() {
         </div>
 
         {isExchangePanelOpen && (
-          <div className="panel exchange-popover">
+          <div className="panel exchange-popover exchange-rate-editor">
             <div className="exchange-meta">
               <span>下次更新：{formatDateTime(exchangeRates.sourceNextUpdateAt)}</span>
               <span>基準：TWD</span>
@@ -2234,44 +2245,58 @@ function App() {
 
             <div className="exchange-grid">
               {exchangeRateRows.map((row) => (
-                <div className="exchange-row" key={row.currency}>
-                  <div>
-                    <strong>{row.currency}</strong>
+                <div className={`exchange-rate-row${row.currency === "TWD" ? " is-base" : ""}`} key={row.currency}>
+                  <div className="exchange-rate-meta">
+                    <div className="exchange-rate-code-line">
+                      <strong>{row.currency}</strong>
+                      <span className="exchange-rate-source-chip">
+                        {row.source === "base"
+                          ? "基準"
+                          : row.source === "api"
+                            ? "API"
+                            : row.source === "manual"
+                              ? "手動"
+                              : "未設定"}
+                      </span>
+                    </div>
                     <small>
                       {row.currency === "TWD"
-                        ? "基準幣"
+                        ? "基準幣 · 1"
                         : `1 ${row.currency} = ${row.rateToTwd ? formatRate(row.rateToTwd) : "未設定"} TWD`}
+                    </small>
+                    <small>
+                      {row.updatedAt
+                        ? `手動更新：${formatDateTime(row.updatedAt)}`
+                        : `資料時間：${formatDateTime(exchangeRates.sourceUpdatedAt)}`}
                     </small>
                   </div>
 
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.000001"
-                    disabled={row.currency === "TWD" || isSavingCloudSettings}
-                    value={getExchangeRateDraft(row.currency)}
-                    onChange={(event) => updateExchangeRateDraft(row.currency, event.target.value)}
-                    aria-label={`${row.currency} 匯率`}
-                  />
+                  {row.currency === "TWD" ? (
+                    <span className="exchange-rate-base-value">基準幣 · 1</span>
+                  ) : (
+                    <div className="exchange-rate-edit-controls">
+                      <input
+                        className="exchange-rate-input"
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        step="any"
+                        disabled={isSavingCloudSettings}
+                        value={getExchangeRateDraft(row.currency)}
+                        onChange={(event) => updateExchangeRateDraft(row.currency, event.target.value)}
+                        aria-label={`${row.currency} 匯率`}
+                      />
 
-                  <span className="rate-source">
-                    {row.source === "base"
-                      ? "基準"
-                      : row.source === "api"
-                        ? "API"
-                        : row.source === "manual"
-                          ? "手動"
-                          : "未設定"}
-                  </span>
-
-                  <button
-                    className="small-action secondary-action"
-                    type="button"
-                    disabled={row.currency === "TWD" || isSavingCloudSettings}
-                    onClick={() => saveManualRate(row.currency)}
-                  >
-                    {isSavingCloudSettings && isCloudMode ? "儲存中" : "儲存"}
-                  </button>
+                      <button
+                        className="exchange-rate-save-button secondary-action"
+                        type="button"
+                        disabled={isSavingCloudSettings}
+                        onClick={() => saveManualRate(row.currency)}
+                      >
+                        {isSavingCloudSettings && isCloudMode ? "儲存中" : "儲存"}
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -2495,14 +2520,19 @@ function App() {
                 <button className="ghost-button secondary-action" type="button" onClick={downloadMarkdownAssetReport}>
                   下載 Markdown 報告
                 </button>
-                <button
-                  className="ghost-button secondary-action"
-                  type="button"
-                  onClick={generateAiNarrativeReport}
-                  disabled={aiReportState.status === "loading"}
-                >
-                  {aiReportState.status === "loading" ? "產生中" : "產生 AI 報告草稿"}
+                <button className="ghost-button secondary-action" type="button" onClick={copyGptReportPrompt}>
+                  複製 GPT 分析提示詞
                 </button>
+                {IS_AI_NARRATIVE_REPORT_UI_ENABLED && (
+                  <button
+                    className="ghost-button secondary-action"
+                    type="button"
+                    onClick={generateAiNarrativeReport}
+                    disabled={aiReportState.status === "loading"}
+                  >
+                    {aiReportState.status === "loading" ? "產生中" : "產生 AI 報告草稿"}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -2662,47 +2692,59 @@ function App() {
                 </div>
               </article>
 
-              <article className="asset-report-card ai-report-card">
-                <div>
-                  <strong>AI 報告草稿</strong>
-                  <small>
-                    只讀取 AI-ready JSON；不會修改 assets / goals / exchangeRates / snapshots，也不會寫入 D1
-                  </small>
-                </div>
-                <div className="ai-report-status-row">
-                  <span>
-                    狀態：
-                    {aiReportState.status === "idle"
-                      ? "尚未產生"
-                      : aiReportState.status === "loading"
-                        ? "產生中"
-                        : aiReportState.status === "success"
-                          ? "產生成功"
-                          : "產生失敗"}
-                  </span>
-                  {aiReportState.model && <span>模型：{aiReportState.model}</span>}
-                  {aiReportState.generatedAt && <span>產生時間：{formatDateTime(aiReportState.generatedAt)}</span>}
-                </div>
-                <p className="asset-report-note">
-                  AI 報告草稿僅用於整理目前 App 已載入資料，不構成投資建議；若 API key 未設定或 API 回錯，規則型報告仍可正常使用。
-                </p>
-                {aiReportState.status === "error" && <p className="warning-message">{aiReportState.error}</p>}
-                {aiReportState.markdown ? (
-                  <>
-                    <div className="ai-report-actions">
-                      <button className="ghost-button secondary-action" type="button" onClick={copyAiNarrativeMarkdown}>
-                        複製 Markdown
-                      </button>
-                      <button className="ghost-button secondary-action" type="button" onClick={downloadAiNarrativeMarkdown}>
-                        下載 AI 報告 Markdown
-                      </button>
-                    </div>
-                    <pre className="ai-report-markdown">{aiReportState.markdown}</pre>
-                  </>
-                ) : (
-                  <p className="muted">尚未產生 AI 報告草稿。請先確認規則型報告內容，再按「產生 AI 報告草稿」。</p>
-                )}
-              </article>
+              {IS_AI_NARRATIVE_REPORT_UI_ENABLED ? (
+                <article className="asset-report-card ai-report-card">
+                  <div>
+                    <strong>AI 報告草稿</strong>
+                    <small>
+                      只讀取 AI-ready JSON；不會修改 assets / goals / exchangeRates / snapshots，也不會寫入 D1
+                    </small>
+                  </div>
+                  <div className="ai-report-status-row">
+                    <span>
+                      狀態：
+                      {aiReportState.status === "idle"
+                        ? "尚未產生"
+                        : aiReportState.status === "loading"
+                          ? "產生中"
+                          : aiReportState.status === "success"
+                            ? "產生成功"
+                            : "產生失敗"}
+                    </span>
+                    {aiReportState.model && <span>模型：{aiReportState.model}</span>}
+                    {aiReportState.generatedAt && <span>產生時間：{formatDateTime(aiReportState.generatedAt)}</span>}
+                  </div>
+                  <p className="asset-report-note">
+                    AI 報告草稿僅用於整理目前 App 已載入資料，不構成投資建議；若 API key 未設定或 API 回錯，規則型報告仍可正常使用。
+                  </p>
+                  {aiReportState.status === "error" && <p className="warning-message">{aiReportState.error}</p>}
+                  {aiReportState.markdown ? (
+                    <>
+                      <div className="ai-report-actions">
+                        <button className="ghost-button secondary-action" type="button" onClick={copyAiNarrativeMarkdown}>
+                          複製 Markdown
+                        </button>
+                        <button className="ghost-button secondary-action" type="button" onClick={downloadAiNarrativeMarkdown}>
+                          下載 AI 報告 Markdown
+                        </button>
+                      </div>
+                      <pre className="ai-report-markdown">{aiReportState.markdown}</pre>
+                    </>
+                  ) : (
+                    <p className="muted">尚未產生 AI 報告草稿。請先確認規則型報告內容，再按「產生 AI 報告草稿」。</p>
+                  )}
+                </article>
+              ) : (
+                <article className="asset-report-card ai-report-card">
+                  <div>
+                    <strong>AI 報告目前停用</strong>
+                    <small>避免消耗 OpenAI API 額度</small>
+                  </div>
+                  <p className="asset-report-note">
+                    可使用 AI-ready JSON / Markdown 匯出，或複製 GPT 分析提示詞後，手動交給 ChatGPT 分析。
+                  </p>
+                </article>
+              )}
             </div>
 
             <p className="asset-report-note">

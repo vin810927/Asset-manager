@@ -19,6 +19,10 @@ const OMITTED_IDENTITY_KEYS = new Set([
   "OPENAI_API_KEY",
 ]);
 
+export function isAiReportEnabled(env = {}) {
+  return String(env.ENABLE_AI_REPORT ?? "").trim() === "true";
+}
+
 export const AI_REPORT_SYSTEM_PROMPT = [
   "你是 Asset Agent 的資產報告整理助手。",
   "你只能根據使用者提供的 AI-ready JSON 產生繁體中文 Markdown 報告。",
@@ -230,6 +234,10 @@ export async function callOpenAiForNarrative({ aiReadyReport, apiKey, model, fet
 
 export async function onRequestPost({ request, env }) {
   try {
+    if (!isAiReportEnabled(env)) {
+      throw createHttpError("AI report is disabled.", 403, "ai-report-disabled");
+    }
+
     await requireAuthenticatedUser(request, env);
 
     const aiReadyReport = validateAiReadyReportInput(await readJsonBody(request));

@@ -2,7 +2,7 @@
 
 ## 近期優先
 
-- [ ] v1.7：AI narrative report production prompt review 與人工驗收 checklist
+- [ ] v1.7：AI narrative report feature flag 開啟流程、production prompt review 與人工驗收 checklist
 - [ ] v1.8：設計更完整的 changed-elsewhere 詳細差異提示、last-write-wins warning 與 rollback 策略
 - [ ] v1.9：建立 scheduled snapshot 與 agent report foundation
 - [ ] 新增 cloud copy 與本機資料的人工比對流程
@@ -102,3 +102,5 @@
 - [x] v1.5：新增 Markdown report export；仍不呼叫 AI、不寫入 D1、不做 scheduled report
 - [x] v1.5.1：修正 report 緊急預備金每月生活費單位提示與萬元簡寫相容換算
 - [x] v1.6：新增 AI narrative report 草稿，僅使用 AI-ready JSON，不讀 raw assets、不寫入 D1
+- [x] v1.6.1：numeric goal inputs 改為 local draft string state，blur / Enter 才儲存
+- [x] v1.6.2：新增 ENABLE_AI_REPORT feature flag，預設停用 AI report API 與前端 generation UI

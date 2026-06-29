@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-06-29：v1.6.2 AI report 預設由 feature flag 停用
+
+### 決策
+保留 Cloudflare Pages 的 `OPENAI_API_KEY` 設定方式，但新增 `ENABLE_AI_REPORT` feature flag。`POST /api/ai-report` 第一層先檢查 `env.ENABLE_AI_REPORT === "true"`；若未設定或不是字串 `true`，直接回 `403` 與 `AI report is disabled.`，且不驗證 Access JWT、不讀 `OPENAI_API_KEY`、不呼叫 OpenAI、不讀寫 D1。
+
+前端預設不顯示「產生 AI 報告草稿」按鈕與 generation UI，只保留 deterministic report、AI-ready JSON export、Markdown export 與「複製 GPT 分析提示詞」。GPT handoff prompt 是純文字，內容來自 `buildAiReadyReportInput(report)`，不呼叫任何 API。
+
+### 理由
+- 使用者希望保留 Cloudflare Pages 的 `OPENAI_API_KEY`，避免未來忘記如何重新設定
+- Production 目前應避免誤按 AI report 消耗 OpenAI API 額度
+- Feature flag 讓 key 存在與功能啟用分離，避免因 key 存在而自動呼叫 OpenAI
+
+### 限制
+v1.6.2 不刪除 `OPENAI_API_KEY` 文件、不新增 secret、不呼叫 OpenAI、不新增 D1 table 或 migration、不做 D1 write、不改 snapshot / restore / import 流程、不新增 dependency、不改 lockfile。未來若要重新啟用，需在 Cloudflare Pages environment variables 設 `ENABLE_AI_REPORT=true` 並 redeploy production。
+
+---
+
 ## 2026-06-29：v1.6 AI narrative report 只吃 AI-ready JSON
 
 ### 決策

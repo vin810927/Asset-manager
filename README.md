@@ -91,7 +91,7 @@ v1.3 的 stale data guard 是輕量 changed-elsewhere 防呆：Cloud Mode 載入
 
 v1.5 延續 deterministic asset report foundation。Report 只從目前 App 已載入的 assets、financialGoals、exchangeRates 與 snapshot metadata 即時計算，包含淨資產、類別配置、幣別曝險、集中度、緊急預備金、stale assets、待處理事項與資料品質。Report 可下載 deterministic JSON、AI-ready JSON 與 Markdown，未使用 AI、不呼叫任何 AI API、不寫入 D1，也不是投資建議。
 
-v1.6 新增 AI narrative report 草稿。前端流程固定為 deterministic report -> `buildAiReadyReportInput(report)` -> `POST /api/ai-report`；後端只接受 AI-ready JSON，會再次驗證 schema 並移除不可信的 user / email 欄位，不直接讀 raw assets、不讀 D1 assets、不寫入 D1。AI 報告只用於自然語言整理資產摘要、風險提醒、資料品質提醒與人工檢查清單，不提供買賣指令或具體標的推薦。
+v1.6 新增 AI narrative report 草稿。前端流程固定為 deterministic report -> `buildAiReadyReportInput(report)` -> `POST /api/ai-report`；後端只接受 AI-ready JSON，會再次驗證 schema 並移除不可信的 user / email 欄位，不直接讀 raw assets、不讀 D1 assets、不寫入 D1。AI 報告只用於自然語言整理資產摘要、風險提醒、資料品質提醒與人工檢查清單，不提供買賣指令或具體標的推薦。v1.6.2 起，AI report 預設由 `ENABLE_AI_REPORT=false` 停用，即使 `OPENAI_API_KEY` 存在也不會呼叫 OpenAI API；使用者仍可下載 AI-ready JSON / Markdown 或複製 GPT 分析提示詞後手動分析。
 
 v1.6 仍不做自動雙向同步、merge、override、background sync、offline queue、完整 conflict resolution、scheduled report、scheduled snapshot、email、notification、PDF 或 D1 report storage。
 
@@ -444,11 +444,20 @@ Zero Trust -> Access controls -> Applications -> asset-agent -> Additional setti
 AI 報告草稿需要在 Cloudflare Pages production / preview environment variables 設定：
 
 ```text
+ENABLE_AI_REPORT=false
 OPENAI_API_KEY=<set in Cloudflare Pages only>
 OPENAI_MODEL=<optional lightweight text model>
 ```
 
-若 `OPENAI_API_KEY` 未設定，`POST /api/ai-report` 會回傳可讀錯誤，前端 deterministic report、AI-ready JSON export 與 Markdown export 仍可正常使用。
+`OPENAI_API_KEY` 可以保留在 Cloudflare Pages environment variables，避免未來忘記如何設定；但只有 `ENABLE_AI_REPORT=true` 時，`POST /api/ai-report` 才會繼續驗證 Access JWT、讀取 `OPENAI_API_KEY` 並呼叫 OpenAI。若 `ENABLE_AI_REPORT` 未設定或不是字串 `true`，API 會直接回 `403` 與 `AI report is disabled.`，不讀 key、不呼叫 OpenAI、不讀寫 D1。
+
+若未來要重新啟用 production AI report，請將 Cloudflare Pages environment variable 設為：
+
+```text
+ENABLE_AI_REPORT=true
+```
+
+然後 redeploy production。若啟用後 `OPENAI_API_KEY` 未設定，`POST /api/ai-report` 會回傳可讀錯誤，前端 deterministic report、AI-ready JSON export 與 Markdown export 仍可正常使用。
 
 `wrangler.jsonc` 只保存非 secret 設定，例如 app name、compatibility date、D1 binding name、database name、database id 與 migrations directory。本專案不會在前端保存任何 D1 secret。
 
@@ -595,7 +604,7 @@ Report 不呼叫 AI、不需要 API key、不做投資買賣建議、不寫入 D
 
 ## AI narrative report
 
-v1.6 的 AI 報告草稿由 Cloudflare Pages Function `POST /api/ai-report` 產生。API 必須通過 Cloudflare Access JWT 驗證，並只接受 AI-ready JSON：
+v1.6 的 AI 報告草稿由 Cloudflare Pages Function `POST /api/ai-report` 產生。v1.6.2 起，API 第一層會檢查 `ENABLE_AI_REPORT === "true"`；預設停用時直接回 403，不會讀取 `OPENAI_API_KEY` 或呼叫 OpenAI。啟用後，API 必須通過 Cloudflare Access JWT 驗證，並只接受 AI-ready JSON：
 
 ```text
 current app state
@@ -615,7 +624,7 @@ current app state
 - 不提供買進、賣出、加碼、減碼或具體標的推薦
 - 報告必須標示不是投資建議，且僅根據目前 App 已載入資料
 
-前端會在「資產報告」區塊顯示 AI 報告狀態、Markdown 草稿、複製 Markdown 與下載 AI 報告 Markdown。若 API key 未設定或 OpenAI API 回錯，UI 只顯示錯誤，不影響 deterministic report。
+前端預設不顯示「產生 AI 報告草稿」按鈕，也不顯示 generation UI；會保留 AI-ready JSON / Markdown export 與「複製 GPT 分析提示詞」功能。若未來以 build flag 重新啟用 AI report UI，UI 會顯示 AI 報告狀態、Markdown 草稿、複製 Markdown 與下載 AI 報告 Markdown。若 API key 未設定或 OpenAI API 回錯，UI 只顯示錯誤，不影響 deterministic report。
 
 ## 資料驗證規則
 

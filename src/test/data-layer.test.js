@@ -15,10 +15,13 @@ import {
   applyFinancialGoalDraftValue,
   buildAttentionItems,
   createFinancialGoalDrafts,
+  createExchangeRateStore,
   formatFinancialGoalDraftPreview,
+  formatRate,
   getGoalMetrics,
   groupTradedHoldings,
   parseFinancialGoalDraftValue,
+  setManualExchangeRate,
   summarizeByCurrency,
   summarizeInBaseCurrency,
   updateFinancialGoalDraft,
@@ -866,6 +869,24 @@ describe("Asset Agent v0.7 data layer foundation", () => {
 
     expect(saveFinancialGoals).toHaveBeenCalledTimes(1);
     expect(saveFinancialGoals).toHaveBeenCalledWith(expect.objectContaining({ monthlyLivingExpense: 222000 }));
+  });
+
+  it("exchange rate input 使用 decimal mode 與 step any，避免瀏覽器小數 validation tooltip", () => {
+    const appSource = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
+
+    expect(appSource).toContain('className="exchange-rate-input"');
+    expect(appSource).toContain('inputMode="decimal"');
+    expect(appSource).toContain('step="any"');
+  });
+
+  it("exchange rate 可保存高精度小數，摘要顯示不輸出過長小數", () => {
+    const highPrecisionRate = 42.06452698439406;
+    const store = createExchangeRateStore({ USD: { rateToTwd: 31.8796 }, JPY: { rateToTwd: 0.196991 } });
+    const nextStore = setManualExchangeRate(store, "USD", highPrecisionRate);
+
+    expect(nextStore.rates.USD.rateToTwd).toBe(highPrecisionRate);
+    expect(formatRate(highPrecisionRate)).toBe("42.064527");
+    expect(formatRate(0.196991)).toBe("0.196991");
   });
 
   it("D1 migration SQL 存在並包含核心 tables", () => {

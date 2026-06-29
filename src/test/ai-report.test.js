@@ -3,15 +3,19 @@ import {
   AI_REPORT_SYSTEM_PROMPT,
   buildAiReportPrompt,
   buildOpenAiRequestBody,
+  isAiReportEnabled,
   onRequestPost as onAiReportPost,
   validateAiReadyReportInput,
 } from "../../functions/api/ai-report.js";
 import { ACCESS_JWT_HEADER } from "../../functions/_shared/access.js";
 import { buildAiReadyReportInput, buildAssetReport, buildMarkdownAssetReport } from "../report/buildAssetReport.js";
 import {
+  buildGptAnalysisPrompt,
   buildAiNarrativeReportPayload,
+  copyGptAnalysisPrompt,
   copyAiReportMarkdown,
   getAiNarrativeReportFileName,
+  isAiNarrativeReportUiEnabled,
   requestAiNarrativeReport,
 } from "../report/aiNarrativeReport.js";
 import { assetsFixture, exchangeRatesFixture, financialGoalsFixture, FIXED_NOW } from "./fixtures.js";
@@ -23,6 +27,7 @@ const ACCESS_ENV = {
 
 const OPENAI_ENV = {
   ...ACCESS_ENV,
+  ENABLE_AI_REPORT: "true",
   OPENAI_API_KEY: "test-openai-key",
   OPENAI_MODEL: "test-model",
 };
@@ -139,6 +144,41 @@ afterEach(() => {
 });
 
 describe("AI narrative report API", () => {
+  it("ENABLE_AI_REPORT 未設定時回 403，且不呼叫 OpenAI", async () => {
+    const { request } = await createAuthenticatedRequest(createAiReadyPayload());
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await onAiReportPost({ request, env: { ...ACCESS_ENV, OPENAI_API_KEY: "test-openai-key" } });
+    const payload = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(payload).toMatchObject({ ok: false, error: "AI report is disabled." });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("ENABLE_AI_REPORT=false 時即使有 OPENAI_API_KEY 也回 403，且不呼叫 OpenAI", async () => {
+    const { request } = await createAuthenticatedRequest(createAiReadyPayload());
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await onAiReportPost({
+      request,
+      env: { ...OPENAI_ENV, ENABLE_AI_REPORT: "false" },
+    });
+
+    expect(response.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(isAiReportEnabled({ ENABLE_AI_REPORT: "false", OPENAI_API_KEY: "test-openai-key" })).toBe(false);
+  });
+
+  it("只有 ENABLE_AI_REPORT=true 時才視為啟用", () => {
+    expect(isAiReportEnabled({})).toBe(false);
+    expect(isAiReportEnabled({ ENABLE_AI_REPORT: "false" })).toBe(false);
+    expect(isAiReportEnabled({ ENABLE_AI_REPORT: "TRUE" })).toBe(false);
+    expect(isAiReportEnabled({ ENABLE_AI_REPORT: "true" })).toBe(true);
+  });
+
   it("POST /api/ai-report 未登入回 401", async () => {
     const response = await onAiReportPost({
       request: new Request("https://asset-agent.test/api/ai-report", {
@@ -151,11 +191,11 @@ describe("AI narrative report API", () => {
     expect(response.status).toBe(401);
   });
 
-  it("缺少 OPENAI_API_KEY 時回可讀錯誤，不 crash", async () => {
+  it("ENABLE_AI_REPORT=true 且缺少 OPENAI_API_KEY 時才回 key 未設定錯誤", async () => {
     const { request, jwks } = await createAuthenticatedRequest(createAiReadyPayload());
     stubAiReportFetch(jwks);
 
-    const response = await onAiReportPost({ request, env: ACCESS_ENV });
+    const response = await onAiReportPost({ request, env: { ...ACCESS_ENV, ENABLE_AI_REPORT: "true" } });
     const payload = await response.json();
 
     expect(response.status).toBe(503);
@@ -247,6 +287,12 @@ describe("AI narrative report API", () => {
 });
 
 describe("AI narrative report frontend helpers", () => {
+  it("前端預設不啟用 AI report generation UI", () => {
+    expect(isAiNarrativeReportUiEnabled({})).toBe(false);
+    expect(isAiNarrativeReportUiEnabled({ VITE_ENABLE_AI_REPORT: "false" })).toBe(false);
+    expect(isAiNarrativeReportUiEnabled({ VITE_ENABLE_AI_REPORT: "true" })).toBe(true);
+  });
+
   it("generate AI report 使用 buildAiReadyReportInput(report)，不把 raw assets 傳給 AI endpoint", async () => {
     const report = createReport();
     const fetcher = vi.fn(async (_url, options = {}) => {
@@ -288,5 +334,19 @@ describe("AI narrative report frontend helpers", () => {
     await expect(copyAiReportMarkdown("# 資產狀況摘要", clipboard)).resolves.toBe(true);
     expect(clipboard.writeText).toHaveBeenCalledWith("# 資產狀況摘要");
     expect(getAiNarrativeReportFileName(createReport())).toBe("asset-agent-ai-report-2026-06-15.md");
+  });
+
+  it("GPT handoff prompt 只使用 AI-ready JSON，且不呼叫 API", async () => {
+    const report = createReport();
+    const clipboard = { writeText: vi.fn(async () => undefined) };
+    const prompt = buildGptAnalysisPrompt(report);
+
+    expect(prompt).toContain("asset-agent-ai-report-input");
+    expect(prompt).toContain("請不要提供買進、賣出、加碼、減碼或具體標的推薦");
+    expect(prompt).not.toContain("ACCESS_AUD");
+    expect(prompt).not.toContain("OPENAI_API_KEY");
+
+    await expect(copyGptAnalysisPrompt(report, clipboard)).resolves.toBe(true);
+    expect(clipboard.writeText).toHaveBeenCalledWith(prompt);
   });
 });
