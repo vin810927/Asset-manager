@@ -1634,6 +1634,21 @@ label {
   line-height: 1.35;
 }
 
+.goal-draft-preview,
+.goal-draft-error {
+  font-size: 0.76rem;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.goal-draft-preview {
+  color: var(--soft-text);
+}
+
+.goal-draft-error {
+  color: var(--warning-text);
+}
+
 input,
 select {
   width: 100%;

@@ -8,8 +8,11 @@ import {
   createCsvTemplate,
   exportAssetsToCsv,
   fetchLatestExchangeRates,
+  applyFinancialGoalDraftValue,
+  createFinancialGoalDrafts,
   formatCompactMoney,
   formatDateTime,
+  formatFinancialGoalDraftPreview,
   formatMoney,
   formatNumber,
   formatRate,
@@ -38,6 +41,7 @@ import {
   summarizeByCurrency,
   summarizeInBaseCurrency,
   toNumber,
+  updateFinancialGoalDraft,
   validateAssetInput,
 } from "./utils.js";
 import {
@@ -70,6 +74,46 @@ const REPORT_ACTION_CATEGORY_LABELS = {
 };
 
 const REPORT_ACTION_CATEGORY_ORDER = ["data_quality", "risk_control", "market_price_update", "backup", "review"];
+
+const FINANCIAL_GOAL_INPUTS = [
+  {
+    field: "monthlyLivingExpense",
+    label: "每月生活費（TWD）",
+    inputMode: "numeric",
+    helper: "請輸入完整 TWD 金額，例如 50000 代表每月 5 萬元。",
+    placeholder: "50000",
+  },
+  {
+    field: "emergencyMonths",
+    label: "緊急預備金月數",
+    inputMode: "decimal",
+    placeholder: "6",
+  },
+  {
+    field: "singleHoldingLimitPercent",
+    label: "單一標的上限 %",
+    inputMode: "decimal",
+    placeholder: "20",
+  },
+  {
+    field: "stockExposureLimitPercent",
+    label: "股票總曝險上限 %",
+    inputMode: "decimal",
+    placeholder: "60",
+  },
+  {
+    field: "debtRatioLimitPercent",
+    label: "負債比上限 %",
+    inputMode: "decimal",
+    placeholder: "50",
+  },
+  {
+    field: "staleAssetDays",
+    label: "幾天沒更新後提醒",
+    inputMode: "numeric",
+    placeholder: "30",
+  },
+];
 
 function getTodayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -706,6 +750,11 @@ function App() {
   }, []);
   const [exchangeRates, setExchangeRates] = useState(() => initialDataSource.loadExchangeRates());
   const [financialGoals, setFinancialGoals] = useState(() => initialDataSource.loadFinancialGoals());
+  const [financialGoalDrafts, setFinancialGoalDrafts] = useState(() =>
+    createFinancialGoalDrafts(initialDataSource.loadFinancialGoals()),
+  );
+  const [financialGoalDraftErrors, setFinancialGoalDraftErrors] = useState({});
+  const [focusedFinancialGoalField, setFocusedFinancialGoalField] = useState("");
   const [exchangeRateDrafts, setExchangeRateDrafts] = useState({});
   const [exchangeRateStatus, setExchangeRateStatus] = useState("");
   const [isFetchingRates, setIsFetchingRates] = useState(false);
@@ -863,6 +912,13 @@ function App() {
       appDataSource.saveFinancialGoals(financialGoals);
     }
   }, [appDataSource, financialGoals, isCloudMode]);
+
+  useEffect(() => {
+    if (focusedFinancialGoalField) return;
+
+    setFinancialGoalDrafts(createFinancialGoalDrafts(financialGoals));
+    setFinancialGoalDraftErrors({});
+  }, [financialGoals, focusedFinancialGoalField]);
 
   const loadCloudData = useCallback(
     async ({ quiet = false, isCancelled = () => false } = {}) => {
@@ -1501,16 +1557,42 @@ function App() {
     }
   }
 
-  async function updateFinancialGoal(field, value) {
-    const numberValue = toNumber(value);
-    const nextGoals = {
-      ...financialGoals,
-      [field]: field === "staleAssetDays" ? Math.max(1, numberValue) : Math.max(0, numberValue),
-    };
+  function changeFinancialGoalDraft(field, value) {
+    setFinancialGoalDrafts((current) => updateFinancialGoalDraft(current, field, value));
+    setFinancialGoalDraftErrors((current) => ({
+      ...current,
+      [field]: "",
+    }));
+  }
+
+  async function applyFinancialGoalDraft(field) {
+    const result = applyFinancialGoalDraftValue(financialGoals, field, financialGoalDrafts[field]);
+    if (!result.ok) {
+      setFinancialGoalDraftErrors((current) => ({
+        ...current,
+        [field]: result.error,
+      }));
+      return false;
+    }
+
+    const nextGoals = result.financialGoals;
+    const currentValue = toNumber(financialGoals[field]);
+
+    setFinancialGoalDraftErrors((current) => ({
+      ...current,
+      [field]: "",
+    }));
+
+    if (currentValue === result.value) {
+      setFinancialGoalDrafts(createFinancialGoalDrafts(nextGoals));
+      return true;
+    }
 
     if (!isCloudMode) {
       setFinancialGoals(nextGoals);
-      return;
+      setFinancialGoalDrafts(createFinancialGoalDrafts(nextGoals));
+      setDataToolStatus("理財目標已更新。");
+      return true;
     }
 
     try {
@@ -1518,11 +1600,40 @@ function App() {
       const savedGoals = await appDataSource.saveFinancialGoals(nextGoals);
 
       setFinancialGoals(savedGoals);
+      setFinancialGoalDrafts(createFinancialGoalDrafts(savedGoals));
       setDataToolStatus("理財目標已儲存到 D1。");
+      return true;
     } catch (error) {
+      setFinancialGoalDraftErrors((current) => ({
+        ...current,
+        [field]: "儲存失敗，資料未變更。",
+      }));
       setDataToolStatus(`儲存失敗，資料未變更：${handleCloudWriteError(error, "D1 理財目標寫入失敗。")}`);
+      return false;
     } finally {
       setIsSavingCloudSettings(false);
+    }
+  }
+
+  async function handleFinancialGoalBlur(field) {
+    const didApply = await applyFinancialGoalDraft(field);
+    if (didApply) setFocusedFinancialGoalField("");
+  }
+
+  function handleFinancialGoalKeyDown(field, event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.currentTarget.blur();
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setFinancialGoalDrafts((current) => updateFinancialGoalDraft(current, field, financialGoals[field]));
+      setFinancialGoalDraftErrors((current) => ({
+        ...current,
+        [field]: "",
+      }));
     }
   }
 
@@ -3131,72 +3242,34 @@ function App() {
             )}
 
             <div className="goal-grid" aria-label="理財目標設定">
-              <label>
-                每月生活費（TWD）
-                <input
-                  type="number"
-                  min="0"
-                  step="1000"
-                  value={financialGoals.monthlyLivingExpense}
-                  disabled={isSavingCloudSettings}
-                  onChange={(event) => updateFinancialGoal("monthlyLivingExpense", toNumber(event.target.value))}
-                />
-                <small className="goal-unit-note">請輸入完整 TWD 金額，例如 50000 代表每月 5 萬元。</small>
-              </label>
-              <label>
-                緊急預備金月數
-                <input
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  value={financialGoals.emergencyMonths}
-                  disabled={isSavingCloudSettings}
-                  onChange={(event) => updateFinancialGoal("emergencyMonths", toNumber(event.target.value))}
-                />
-              </label>
-              <label>
-                單一標的上限 %
-                <input
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  value={financialGoals.singleHoldingLimitPercent}
-                  disabled={isSavingCloudSettings}
-                  onChange={(event) => updateFinancialGoal("singleHoldingLimitPercent", toNumber(event.target.value))}
-                />
-              </label>
-              <label>
-                股票總曝險上限 %
-                <input
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  value={financialGoals.stockExposureLimitPercent}
-                  disabled={isSavingCloudSettings}
-                  onChange={(event) => updateFinancialGoal("stockExposureLimitPercent", toNumber(event.target.value))}
-                />
-              </label>
-              <label>
-                負債比上限 %
-                <input
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  value={financialGoals.debtRatioLimitPercent}
-                  disabled={isSavingCloudSettings}
-                  onChange={(event) => updateFinancialGoal("debtRatioLimitPercent", toNumber(event.target.value))}
-                />
-              </label>
-              <label>
-                幾天沒更新後提醒
-                <input
-                  type="number"
-                  min="1"
-                  value={financialGoals.staleAssetDays}
-                  disabled={isSavingCloudSettings}
-                  onChange={(event) => updateFinancialGoal("staleAssetDays", toNumber(event.target.value))}
-                />
-              </label>
+              {FINANCIAL_GOAL_INPUTS.map((goalInput) => {
+                const draftValue = financialGoalDrafts[goalInput.field] ?? "";
+                const draftError = financialGoalDraftErrors[goalInput.field];
+                const draftPreview = formatFinancialGoalDraftPreview(goalInput.field, draftValue);
+
+                return (
+                  <label key={goalInput.field}>
+                    {goalInput.label}
+                    <input
+                      type="text"
+                      inputMode={goalInput.inputMode}
+                      value={draftValue}
+                      placeholder={goalInput.placeholder}
+                      disabled={isSavingCloudSettings}
+                      onFocus={() => setFocusedFinancialGoalField(goalInput.field)}
+                      onChange={(event) => changeFinancialGoalDraft(goalInput.field, event.target.value)}
+                      onBlur={() => handleFinancialGoalBlur(goalInput.field)}
+                      onKeyDown={(event) => handleFinancialGoalKeyDown(goalInput.field, event)}
+                    />
+                    {goalInput.helper && <small className="goal-unit-note">{goalInput.helper}</small>}
+                    {draftError ? (
+                      <small className="goal-draft-error">{draftError}</small>
+                    ) : (
+                      draftPreview && <small className="goal-draft-preview">{draftPreview}</small>
+                    )}
+                  </label>
+                );
+              })}
             </div>
             {isCloudMode && (
               <p className="cloud-copy-note">

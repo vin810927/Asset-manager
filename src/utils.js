@@ -30,6 +30,14 @@ export const DEFAULT_FINANCIAL_GOALS = {
   debtRatioLimitPercent: 50,
   staleAssetDays: 30,
 };
+export const FINANCIAL_GOAL_DRAFT_FIELDS = [
+  "monthlyLivingExpense",
+  "emergencyMonths",
+  "singleHoldingLimitPercent",
+  "stockExposureLimitPercent",
+  "debtRatioLimitPercent",
+  "staleAssetDays",
+];
 export const STALE_EXCHANGE_RATE_DAYS = 7;
 export const STALE_STOCK_PRICE_DAYS = 7;
 export const CSV_COLUMNS = [
@@ -288,6 +296,107 @@ export function parseFinancialGoals(payload) {
     debtRatioLimitPercent: Math.max(0, toNumber(value.debtRatioLimitPercent ?? DEFAULT_FINANCIAL_GOALS.debtRatioLimitPercent)),
     staleAssetDays: Math.max(1, toNumber(value.staleAssetDays ?? DEFAULT_FINANCIAL_GOALS.staleAssetDays)),
   };
+}
+
+function normalizeDraftNumberText(value) {
+  return String(value ?? "").trim().replace(/,/g, "");
+}
+
+function formatDraftNumber(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return "";
+
+  return String(parsed);
+}
+
+export function createFinancialGoalDrafts(financialGoals) {
+  const goals = parseFinancialGoals(financialGoals);
+
+  return FINANCIAL_GOAL_DRAFT_FIELDS.reduce(
+    (drafts, field) => ({
+      ...drafts,
+      [field]: formatDraftNumber(goals[field]),
+    }),
+    {},
+  );
+}
+
+export function updateFinancialGoalDraft(drafts, field, value) {
+  if (!FINANCIAL_GOAL_DRAFT_FIELDS.includes(field)) return drafts;
+
+  return {
+    ...drafts,
+    [field]: String(value ?? ""),
+  };
+}
+
+export function parseFinancialGoalDraftValue(field, value) {
+  if (!FINANCIAL_GOAL_DRAFT_FIELDS.includes(field)) {
+    return { ok: false, error: "未知的理財目標欄位。" };
+  }
+
+  let text = normalizeDraftNumberText(value);
+  if (text.endsWith("%")) text = text.slice(0, -1).trim();
+
+  if (!text) {
+    return { ok: false, error: "請輸入數字。" };
+  }
+
+  if (text === "-" || text === "." || text === "-." || !/\d/.test(text)) {
+    return { ok: false, error: "請輸入完整數字。" };
+  }
+
+  if (!/^-?\d*(?:\.\d*)?$/.test(text)) {
+    return { ok: false, error: "請輸入有效數字。" };
+  }
+
+  const numberValue = Number(text);
+  if (!Number.isFinite(numberValue)) {
+    return { ok: false, error: "請輸入有效數字。" };
+  }
+
+  if (numberValue < 0) {
+    return { ok: false, error: "數值不可小於 0。" };
+  }
+
+  if (field === "staleAssetDays" && numberValue < 1) {
+    return { ok: false, error: "提醒天數至少為 1 天。" };
+  }
+
+  return { ok: true, value: numberValue };
+}
+
+export function applyFinancialGoalDraftValue(financialGoals, field, value) {
+  const parsed = parseFinancialGoalDraftValue(field, value);
+  if (!parsed.ok) return parsed;
+
+  return {
+    ok: true,
+    value: parsed.value,
+    financialGoals: {
+      ...parseFinancialGoals(financialGoals),
+      [field]: parsed.value,
+    },
+  };
+}
+
+export function formatFinancialGoalDraftPreview(field, value) {
+  const parsed = parseFinancialGoalDraftValue(field, value);
+  if (!parsed.ok) return "";
+
+  if (field === "monthlyLivingExpense") {
+    return `目前將儲存為：${formatMoney(parsed.value, BASE_CURRENCY)}`;
+  }
+
+  if (field === "emergencyMonths") {
+    return `目前將儲存為：${formatNumber(parsed.value)} 個月`;
+  }
+
+  if (field === "staleAssetDays") {
+    return `目前將儲存為：${formatNumber(parsed.value)} 天`;
+  }
+
+  return `目前將儲存為：${formatNumber(parsed.value)}%`;
 }
 
 export function loadFinancialGoals() {

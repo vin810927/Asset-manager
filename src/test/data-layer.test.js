@@ -12,11 +12,16 @@ import {
 import { createLocalStore } from "../data/localStore.js";
 import { assetsFixture, exchangeRatesFixture, financialGoalsFixture } from "./fixtures.js";
 import {
+  applyFinancialGoalDraftValue,
   buildAttentionItems,
+  createFinancialGoalDrafts,
+  formatFinancialGoalDraftPreview,
   getGoalMetrics,
   groupTradedHoldings,
+  parseFinancialGoalDraftValue,
   summarizeByCurrency,
   summarizeInBaseCurrency,
+  updateFinancialGoalDraft,
 } from "../utils.js";
 
 function createMemoryLocalStorage() {
@@ -779,6 +784,88 @@ describe("Asset Agent v0.7 data layer foundation", () => {
         financialGoals: financialGoalsFixture,
       }),
     ).not.toThrow();
+  });
+
+  it("numeric input draft 可連續輸入完整金額，keypress 不觸發儲存", () => {
+    const saveFinancialGoals = vi.fn();
+    let drafts = createFinancialGoalDrafts(financialGoalsFixture);
+
+    for (const value of ["4", "40", "400", "4000", "40000", "400000"]) {
+      drafts = updateFinancialGoalDraft(drafts, "monthlyLivingExpense", value);
+      expect(drafts.monthlyLivingExpense).toBe(value);
+    }
+
+    expect(saveFinancialGoals).not.toHaveBeenCalled();
+
+    const applied = applyFinancialGoalDraftValue(financialGoalsFixture, "monthlyLivingExpense", drafts.monthlyLivingExpense);
+    expect(applied).toMatchObject({
+      ok: true,
+      value: 400000,
+      financialGoals: expect.objectContaining({ monthlyLivingExpense: 400000 }),
+    });
+    expect(formatFinancialGoalDraftPreview("monthlyLivingExpense", drafts.monthlyLivingExpense)).toContain("TWD 400,000");
+  });
+
+  it("monthlyLivingExpense apply 後才更新 goals，legacy 40 不會自動改成 D1 資料", () => {
+    let drafts = createFinancialGoalDrafts(financialGoalsFixture);
+
+    drafts = updateFinancialGoalDraft(drafts, "monthlyLivingExpense", "40");
+
+    expect(financialGoalsFixture.monthlyLivingExpense).toBe(100000);
+
+    const applied = applyFinancialGoalDraftValue(financialGoalsFixture, "monthlyLivingExpense", drafts.monthlyLivingExpense);
+
+    expect(applied.ok).toBe(true);
+    expect(applied.financialGoals.monthlyLivingExpense).toBe(40);
+  });
+
+  it("percent threshold draft 可連續輸入 90 或 90%，不會在 keypress 中被格式化", () => {
+    let drafts = createFinancialGoalDrafts(financialGoalsFixture);
+
+    drafts = updateFinancialGoalDraft(drafts, "stockExposureLimitPercent", "9");
+    drafts = updateFinancialGoalDraft(drafts, "stockExposureLimitPercent", "90");
+
+    expect(drafts.stockExposureLimitPercent).toBe("90");
+    expect(parseFinancialGoalDraftValue("stockExposureLimitPercent", drafts.stockExposureLimitPercent)).toMatchObject({
+      ok: true,
+      value: 90,
+    });
+    expect(parseFinancialGoalDraftValue("stockExposureLimitPercent", "90%")).toMatchObject({ ok: true, value: 90 });
+  });
+
+  it("partial numeric draft 可暫存，apply 時才顯示 inline validation", () => {
+    let drafts = createFinancialGoalDrafts(financialGoalsFixture);
+
+    drafts = updateFinancialGoalDraft(drafts, "emergencyMonths", "");
+    expect(drafts.emergencyMonths).toBe("");
+    expect(parseFinancialGoalDraftValue("emergencyMonths", drafts.emergencyMonths)).toMatchObject({
+      ok: false,
+      error: "請輸入數字。",
+    });
+
+    drafts = updateFinancialGoalDraft(drafts, "emergencyMonths", "0.");
+    expect(drafts.emergencyMonths).toBe("0.");
+    expect(parseFinancialGoalDraftValue("emergencyMonths", drafts.emergencyMonths)).toMatchObject({
+      ok: true,
+      value: 0,
+    });
+  });
+
+  it("Cloud Mode draft typing 不觸發 D1 write，apply 後才儲存且 stale guard 仍由 dataSource 執行", async () => {
+    const saveFinancialGoals = vi.fn(async (goals) => goals);
+    let drafts = createFinancialGoalDrafts(financialGoalsFixture);
+
+    for (const value of ["2", "22", "222", "2220", "22200", "222000"]) {
+      drafts = updateFinancialGoalDraft(drafts, "monthlyLivingExpense", value);
+    }
+
+    expect(saveFinancialGoals).not.toHaveBeenCalled();
+
+    const applied = applyFinancialGoalDraftValue(financialGoalsFixture, "monthlyLivingExpense", drafts.monthlyLivingExpense);
+    await saveFinancialGoals(applied.financialGoals);
+
+    expect(saveFinancialGoals).toHaveBeenCalledTimes(1);
+    expect(saveFinancialGoals).toHaveBeenCalledWith(expect.objectContaining({ monthlyLivingExpense: 222000 }));
   });
 
   it("D1 migration SQL 存在並包含核心 tables", () => {
