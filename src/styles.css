@@ -494,6 +494,10 @@ h2 {
   min-width: 0;
 }
 
+.asset-report-card.ai-report-card {
+  grid-column: 1 / -1;
+}
+
 .asset-report-card > div:first-child {
   display: grid;
   gap: 2px;
@@ -521,6 +525,45 @@ h2 {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.ai-report-status-row,
+.ai-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.ai-report-status-row {
+  color: var(--soft-text);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.ai-report-markdown {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--row-border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--text);
+  padding: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 0.84rem/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.warning-message {
+  border: 1px solid rgba(180, 132, 83, 0.36);
+  border-radius: 12px;
+  background: rgba(180, 132, 83, 0.12);
+  color: var(--text);
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 0.84rem;
+  font-weight: 850;
+  line-height: 1.5;
 }
 
 .report-chip-list li {

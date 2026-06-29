@@ -2,8 +2,9 @@
 
 ## 近期優先
 
-- [ ] v1.6：設計更完整的 changed-elsewhere 詳細差異提示、last-write-wins warning 與 rollback 策略
-- [ ] v1.7：建立 scheduled snapshot 與 agent report foundation
+- [ ] v1.7：AI narrative report production prompt review 與人工驗收 checklist
+- [ ] v1.8：設計更完整的 changed-elsewhere 詳細差異提示、last-write-wins warning 與 rollback 策略
+- [ ] v1.9：建立 scheduled snapshot 與 agent report foundation
 - [ ] 新增 cloud copy 與本機資料的人工比對流程
 - [ ] 改善 CSV preview 的欄位對照與錯誤定位
 - [ ] 新增基金類型的專屬欄位
@@ -100,3 +101,4 @@
 - [x] v1.5：新增 AI-ready JSON export，作為未來 AI narrative report 的穩定 input
 - [x] v1.5：新增 Markdown report export；仍不呼叫 AI、不寫入 D1、不做 scheduled report
 - [x] v1.5.1：修正 report 緊急預備金每月生活費單位提示與萬元簡寫相容換算
+- [x] v1.6：新增 AI narrative report 草稿，僅使用 AI-ready JSON，不讀 raw assets、不寫入 D1

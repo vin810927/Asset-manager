@@ -49,6 +49,11 @@ import {
   setStoredDataSourceMode,
 } from "./data/dataSource.js";
 import { buildAiReadyReportInput, buildAssetReport, buildMarkdownAssetReport } from "./report/buildAssetReport.js";
+import {
+  copyAiReportMarkdown,
+  getAiNarrativeReportFileName,
+  requestAiNarrativeReport,
+} from "./report/aiNarrativeReport.js";
 
 const REPORT_SEVERITY_LABELS = {
   info: "Info",
@@ -757,6 +762,13 @@ function App() {
   const [isDownloadingSnapshot, setIsDownloadingSnapshot] = useState(false);
   const [isPreviewingRestore, setIsPreviewingRestore] = useState(false);
   const [isRestoringSnapshot, setIsRestoringSnapshot] = useState(false);
+  const [aiReportState, setAiReportState] = useState({
+    status: "idle",
+    markdown: "",
+    error: "",
+    generatedAt: null,
+    model: "",
+  });
 
   const latestSnapshot = cloudSnapshots[0] ?? null;
   const selectedSnapshot =
@@ -784,6 +796,20 @@ function App() {
       })).filter((group) => group.items.length > 0),
     [assetReport.actionItems],
   );
+
+  useEffect(() => {
+    setAiReportState((current) => {
+      if (current.status === "idle" || current.status === "loading") return current;
+
+      return {
+        status: "idle",
+        markdown: "",
+        error: "",
+        generatedAt: null,
+        model: "",
+      };
+    });
+  }, [assetReport]);
 
   const refreshCloudSnapshots = useCallback(
     async ({ quiet = false } = {}) => {
@@ -1537,6 +1563,55 @@ function App() {
   function downloadMarkdownAssetReport() {
     downloadTextFile(buildMarkdownAssetReport(assetReport), getMarkdownReportFileName(assetReport), "text/markdown;charset=utf-8");
     setDataToolStatus("已下載 Markdown 資產報告。");
+  }
+
+  async function generateAiNarrativeReport() {
+    setAiReportState((current) => ({
+      ...current,
+      status: "loading",
+      error: "",
+    }));
+    setDataToolStatus("正在產生 AI 報告草稿；只會送出 AI-ready JSON。");
+
+    try {
+      const result = await requestAiNarrativeReport({ report: assetReport });
+
+      setAiReportState({
+        status: "success",
+        markdown: result.markdown,
+        error: "",
+        generatedAt: result.generatedAt,
+        model: result.model,
+      });
+      setDataToolStatus("AI 報告草稿已產生；沒有寫入 D1，也不構成投資建議。");
+    } catch (error) {
+      setAiReportState({
+        status: "error",
+        markdown: "",
+        error: error.message || "AI 報告產生失敗。",
+        generatedAt: null,
+        model: "",
+      });
+      setDataToolStatus(`AI 報告草稿產生失敗：${error.message || "請稍後再試。"}`);
+    }
+  }
+
+  async function copyAiNarrativeMarkdown() {
+    try {
+      await copyAiReportMarkdown(aiReportState.markdown);
+      setDataToolStatus("已複製 AI 報告 Markdown。");
+    } catch (error) {
+      setDataToolStatus(error.message || "複製 AI 報告失敗。");
+    }
+  }
+
+  function downloadAiNarrativeMarkdown() {
+    downloadTextFile(
+      aiReportState.markdown,
+      getAiNarrativeReportFileName(assetReport),
+      "text/markdown;charset=utf-8",
+    );
+    setDataToolStatus("已下載 AI 報告 Markdown。");
   }
 
   function downloadCsvTemplate() {
@@ -2309,6 +2384,14 @@ function App() {
                 <button className="ghost-button secondary-action" type="button" onClick={downloadMarkdownAssetReport}>
                   下載 Markdown 報告
                 </button>
+                <button
+                  className="ghost-button secondary-action"
+                  type="button"
+                  onClick={generateAiNarrativeReport}
+                  disabled={aiReportState.status === "loading"}
+                >
+                  {aiReportState.status === "loading" ? "產生中" : "產生 AI 報告草稿"}
+                </button>
               </div>
             </div>
 
@@ -2466,6 +2549,48 @@ function App() {
                     <strong>規則型摘要</strong>
                   </div>
                 </div>
+              </article>
+
+              <article className="asset-report-card ai-report-card">
+                <div>
+                  <strong>AI 報告草稿</strong>
+                  <small>
+                    只讀取 AI-ready JSON；不會修改 assets / goals / exchangeRates / snapshots，也不會寫入 D1
+                  </small>
+                </div>
+                <div className="ai-report-status-row">
+                  <span>
+                    狀態：
+                    {aiReportState.status === "idle"
+                      ? "尚未產生"
+                      : aiReportState.status === "loading"
+                        ? "產生中"
+                        : aiReportState.status === "success"
+                          ? "產生成功"
+                          : "產生失敗"}
+                  </span>
+                  {aiReportState.model && <span>模型：{aiReportState.model}</span>}
+                  {aiReportState.generatedAt && <span>產生時間：{formatDateTime(aiReportState.generatedAt)}</span>}
+                </div>
+                <p className="asset-report-note">
+                  AI 報告草稿僅用於整理目前 App 已載入資料，不構成投資建議；若 API key 未設定或 API 回錯，規則型報告仍可正常使用。
+                </p>
+                {aiReportState.status === "error" && <p className="warning-message">{aiReportState.error}</p>}
+                {aiReportState.markdown ? (
+                  <>
+                    <div className="ai-report-actions">
+                      <button className="ghost-button secondary-action" type="button" onClick={copyAiNarrativeMarkdown}>
+                        複製 Markdown
+                      </button>
+                      <button className="ghost-button secondary-action" type="button" onClick={downloadAiNarrativeMarkdown}>
+                        下載 AI 報告 Markdown
+                      </button>
+                    </div>
+                    <pre className="ai-report-markdown">{aiReportState.markdown}</pre>
+                  </>
+                ) : (
+                  <p className="muted">尚未產生 AI 報告草稿。請先確認規則型報告內容，再按「產生 AI 報告草稿」。</p>
+                )}
               </article>
             </div>
 

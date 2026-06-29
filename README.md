@@ -14,6 +14,7 @@
 - v1.3 新增 Cloud Mode 寫入前 stale data guard，避免覆蓋其他裝置已更新的 D1 資料
 - v1.4 新增 deterministic asset report foundation，提供規則型摘要、風險旗標與資料品質檢查
 - v1.5 優化 deterministic report UX，並新增 AI-ready JSON 與 Markdown report export
+- v1.6 新增 AI 報告草稿；後端只接收 AI-ready JSON，不直接讀 raw assets，不寫入 D1
 - Cloud Mode 不是自動雙向同步；手機與電腦共用 D1 資料，但需要重新整理或重新讀取才會看到另一端變更
 - 支援資產類型：
   - 現金
@@ -88,9 +89,11 @@ v1.2 已加入 D1 snapshot / cloud backup safety layer。Snapshot 內容包含�
 
 v1.3 的 stale data guard 是輕量 changed-elsewhere 防呆：Cloud Mode 載入時記錄 D1 revision，新增、編輯、刪除、理財目標、匯率、snapshot restore 與 JSON replace cloud copy 前會重新檢查 revision；若 D1 已被其他裝置或頁面更新，本次寫入會被阻止，畫面不會先更新，也不會改 localStorage。使用者需要按「重新整理雲端資料」後再修改。
 
-v1.5 延續 deterministic asset report foundation。Report 只從目前 App 已載入的 assets、financialGoals、exchangeRates 與 snapshot metadata 即時計算，包含淨資產、類別配置、幣別曝險、集中度、緊急預備金、stale assets、待處理事項與資料品質。Report 可下載 deterministic JSON、AI-ready JSON 與 Markdown，未使用 AI、不呼叫任何 AI API、不寫入 D1，也不是投資建議。未來 AI narrative report 會以 AI-ready JSON 作為 input，而不是直接吃 raw assets。
+v1.5 延續 deterministic asset report foundation。Report 只從目前 App 已載入的 assets、financialGoals、exchangeRates 與 snapshot metadata 即時計算，包含淨資產、類別配置、幣別曝險、集中度、緊急預備金、stale assets、待處理事項與資料品質。Report 可下載 deterministic JSON、AI-ready JSON 與 Markdown，未使用 AI、不呼叫任何 AI API、不寫入 D1，也不是投資建議。
 
-v1.5 仍不做自動雙向同步、merge、override、background sync、offline queue、完整 conflict resolution、scheduled report、scheduled snapshot、email、notification 或 PDF；agent report 仍留待後續版本。
+v1.6 新增 AI narrative report 草稿。前端流程固定為 deterministic report -> `buildAiReadyReportInput(report)` -> `POST /api/ai-report`；後端只接受 AI-ready JSON，會再次驗證 schema 並移除不可信的 user / email 欄位，不直接讀 raw assets、不讀 D1 assets、不寫入 D1。AI 報告只用於自然語言整理資產摘要、風險提醒、資料品質提醒與人工檢查清單，不提供買賣指令或具體標的推薦。
+
+v1.6 仍不做自動雙向同步、merge、override、background sync、offline queue、完整 conflict resolution、scheduled report、scheduled snapshot、email、notification、PDF 或 D1 report storage。
 
 ## 技術棧
 
@@ -438,6 +441,15 @@ Zero Trust -> Access controls -> Applications -> asset-agent -> Additional setti
 
 `.env.example` 只提供 placeholder，實際值需設定在 Cloudflare Pages dashboard，不要寫死在 repo。
 
+AI 報告草稿需要在 Cloudflare Pages production / preview environment variables 設定：
+
+```text
+OPENAI_API_KEY=<set in Cloudflare Pages only>
+OPENAI_MODEL=<optional lightweight text model>
+```
+
+若 `OPENAI_API_KEY` 未設定，`POST /api/ai-report` 會回傳可讀錯誤，前端 deterministic report、AI-ready JSON export 與 Markdown export 仍可正常使用。
+
 `wrangler.jsonc` 只保存非 secret 設定，例如 app name、compatibility date、D1 binding name、database name、database id 與 migrations directory。本專案不會在前端保存任何 D1 secret。
 
 `GET /api/health` 是 v0.8 的 health check endpoint，回傳格式包含：
@@ -580,6 +592,30 @@ v1.5 新增兩種 export：
 - Markdown report：人類可讀的資產摘要、配置摘要、幣別曝險、風險提示、待處理事項、資料品質、snapshot 狀態與 disclaimer。
 
 Report 不呼叫 AI、不需要 API key、不做投資買賣建議、不寫入 D1、不建立 report table，也不產生 PDF；使用者可在 UI 重新產生並下載 JSON / AI-ready JSON / Markdown。
+
+## AI narrative report
+
+v1.6 的 AI 報告草稿由 Cloudflare Pages Function `POST /api/ai-report` 產生。API 必須通過 Cloudflare Access JWT 驗證，並只接受 AI-ready JSON：
+
+```text
+current app state
+-> build deterministic report
+-> buildAiReadyReportInput(report)
+-> POST /api/ai-report
+-> AI markdown narrative
+```
+
+安全邊界：
+
+- AI input 只能使用 `buildAiReadyReportInput(report)` 的輸出
+- 不直接把 raw assets 傳給 AI
+- 不把 Access token、JWT、secret、`ACCESS_AUD` 或 `ACCESS_TEAM_DOMAIN` 傳給 AI
+- 不讀 D1 raw assets，也不寫入 D1
+- 不讓 AI 修改 assets、financialGoals、exchangeRates 或 snapshots
+- 不提供買進、賣出、加碼、減碼或具體標的推薦
+- 報告必須標示不是投資建議，且僅根據目前 App 已載入資料
+
+前端會在「資產報告」區塊顯示 AI 報告狀態、Markdown 草稿、複製 Markdown 與下載 AI 報告 Markdown。若 API key 未設定或 OpenAI API 回錯，UI 只顯示錯誤，不影響 deterministic report。
 
 ## 資料驗證規則
 

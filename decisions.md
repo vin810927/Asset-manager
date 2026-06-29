@@ -1,5 +1,24 @@
 # Decisions
 
+## 2026-06-29：v1.6 AI narrative report 只吃 AI-ready JSON
+
+### 決策
+新增 Cloudflare Pages Function `POST /api/ai-report`，由 Cloudflare Access JWT 驗證使用者後，只接受 v1.5 `buildAiReadyReportInput(report)` 產生的 AI-ready JSON。API 會再次驗證 `purpose`、summary、allocation、riskSummary、dataQuality 與 constraints，並移除不可信的 `user_id` / `email` 等身份欄位；若 payload 夾帶 raw `assets`、`rawAssets`、`holdings`、`transactions` 或 `snapshots`，會回 400。
+
+OpenAI API key 僅透過 Cloudflare Pages environment variable `OPENAI_API_KEY` 提供，model 可用 `OPENAI_MODEL` 設定；repo 只放 `.env.example` placeholder，不放實際 secret。若缺少 `OPENAI_API_KEY`，API 回可讀錯誤，前端 deterministic report 仍可使用。
+
+前端「資產報告」區塊新增「產生 AI 報告草稿」，流程固定為 deterministic report -> AI-ready JSON -> `/api/ai-report` -> Markdown。UI 可顯示、複製與下載 AI Markdown，但不讓 AI 修改 assets、financialGoals、exchangeRates 或 snapshots。
+
+### 理由
+- v1.5 已建立穩定的 AI-ready JSON input，v1.6 應延續這個安全邊界，而不是直接把 raw assets 丟給 AI
+- 後端 Function 代管 OpenAI API key，可避免 secret 進入前端 bundle 或 localStorage
+- Prompt 固定要求繁體中文 Markdown、禁止買賣指令與具體標的推薦，並要求資料品質不足時優先提醒人工確認
+
+### 限制
+v1.6 不新增 D1 table 或 migration、不讀 D1 raw assets、不寫入 D1、不儲存 report、不做 scheduled report、scheduled snapshot、email、notification、PDF、自動同步、background sync、offline queue、merge、rollback 或完整 conflict resolution。AI narrative report 是草稿，不構成投資建議。
+
+---
+
 ## 2026-06-29：v1.5.1 修正 report 緊急預備金生活費單位
 
 ### 決策
