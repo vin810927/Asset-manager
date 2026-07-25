@@ -2,9 +2,11 @@
 
 ## 近期優先
 
-- [ ] v1.7：AI narrative report feature flag 開啟流程、production prompt review 與人工驗收 checklist
-- [ ] v1.8：設計更完整的 changed-elsewhere 詳細差異提示、last-write-wins warning 與 rollback 策略
-- [ ] v1.9：建立 scheduled snapshot 與 agent report foundation
+- [ ] v1.8：production 驗收 ExchangeRate-API / Alpha Vantage key、免費額度與錯誤文案
+- [ ] v1.9：評估可信台股 / ETF latest-close provider
+- [ ] v2.0：AI narrative report feature flag 開啟流程、production prompt review 與人工驗收 checklist
+- [ ] v2.1：設計更完整的 changed-elsewhere 詳細差異提示、last-write-wins warning 與 rollback 策略
+- [ ] v2.2：建立 scheduled snapshot 與 agent report foundation
 - [ ] 新增 cloud copy 與本機資料的人工比對流程
 - [ ] 改善 CSV preview 的欄位對照與錯誤定位
 - [ ] 新增基金類型的專屬欄位
@@ -104,3 +106,11 @@
 - [x] v1.6：新增 AI narrative report 草稿，僅使用 AI-ready JSON，不讀 raw assets、不寫入 D1
 - [x] v1.6.1：numeric goal inputs 改為 local draft string state，blur / Enter 才儲存
 - [x] v1.6.2：新增 ENABLE_AI_REPORT feature flag，預設停用 AI report API 與前端 generation UI
+- [x] v1.7：新增手動行情更新 preview foundation，預設停用且套用前需人工確認
+- [x] v1.7：新增 ExchangeRate-API 匯率 adapter 與 Alpha Vantage 美股 / ETF latest-close adapter
+- [x] v1.7：台股 / unknown market 先回 unsupported / needsReview，不亂接不可驗證 endpoint
+- [x] v1.7：前端行情更新區塊支援 failed / needsReview / selected apply flow
+- [x] v1.7：新增嚴格 localhost-only Pages dev auth stub，支援本機 market data E2E 驗收
+- [x] v1.7：Alpha Vantage 多標的 preview 依 normalized symbol 去重並序列查詢，quota 後停止且保留 partial result
+- [x] v1.7：忽略 Wrangler 本機產物的 ESLint 掃描，避免 `.wrangler/**` 污染 lint
+- [x] v1.7：建立行情 preview secondary / apply primary action hierarchy，並統一 invalid selection eligibility

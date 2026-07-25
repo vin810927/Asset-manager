@@ -60,6 +60,20 @@ import {
   isAiNarrativeReportUiEnabled,
   requestAiNarrativeReport,
 } from "./report/aiNarrativeReport.js";
+import {
+  applyMarketDataPreviewSelection,
+  buildExchangeRatePreviewRequest,
+  buildStockPricePreviewRequest,
+  createMarketDataRequestGate,
+  createMarketDataSelection,
+  getMarketDataActionState,
+  getMarketDataSelectionCounts,
+  getStockPreviewRequestSummary,
+  isApplicableExchangeRatePreview,
+  isApplicablePricePreview,
+  isMarketDataUpdateUiEnabled,
+  mergeMarketDataPreviewResults,
+} from "./marketData/marketData.js";
 
 const REPORT_SEVERITY_LABELS = {
   info: "Info",
@@ -77,6 +91,7 @@ const REPORT_ACTION_CATEGORY_LABELS = {
 
 const REPORT_ACTION_CATEGORY_ORDER = ["data_quality", "risk_control", "market_price_update", "backup", "review"];
 const IS_AI_NARRATIVE_REPORT_UI_ENABLED = isAiNarrativeReportUiEnabled();
+const IS_MARKET_DATA_UPDATE_UI_ENABLED = isMarketDataUpdateUiEnabled(import.meta.env);
 
 const FINANCIAL_GOAL_INPUTS = [
   {
@@ -599,6 +614,22 @@ function formatUpdatedAt(value) {
   return `更新 ${formatDateTime(value)}`;
 }
 
+function formatChangePercent(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "n/a";
+  const number = Number(value);
+  const sign = number > 0 ? "+" : "";
+  return `${sign}${formatNumber(number)}%`;
+}
+
+function getMarketDataStatusLabel(status, errorCode) {
+  if (errorCode === "provider_request_skipped") return "本次略過";
+  if (status === "ready") return "可套用";
+  if (status === "unchanged") return "無明顯變化";
+  if (status === "needs_review") return "需確認";
+  if (status === "failed") return "失敗";
+  return "待確認";
+}
+
 function getBackupFileName() {
   return `asset-agent-backup-${new Date().toISOString().slice(0, 10)}.json`;
 }
@@ -762,6 +793,16 @@ function App() {
   const [exchangeRateStatus, setExchangeRateStatus] = useState("");
   const [isFetchingRates, setIsFetchingRates] = useState(false);
   const [isExchangePanelOpen, setIsExchangePanelOpen] = useState(false);
+  const [marketDataPreview, setMarketDataPreview] = useState(null);
+  const [marketDataSelection, setMarketDataSelection] = useState({ exchangeRates: {}, stockPrices: {} });
+  const [marketDataStatus, setMarketDataStatus] = useState(() => ({
+    state: IS_MARKET_DATA_UPDATE_UI_ENABLED ? "idle" : "disabled",
+    message: IS_MARKET_DATA_UPDATE_UI_ENABLED
+      ? "可手動檢查匯率與股票 / ETF 最新可用收盤價；套用前會先預覽。"
+      : "行情更新目前停用；可保留手動輸入與報告匯出，不會呼叫外部行情 provider。",
+  }));
+  const [isCheckingMarketData, setIsCheckingMarketData] = useState(false);
+  const [isApplyingMarketData, setIsApplyingMarketData] = useState(false);
   const [isAssetFormOpen, setIsAssetFormOpen] = useState(false);
   const [isCurrencyBreakdownOpen, setIsCurrencyBreakdownOpen] = useState(false);
   const [isDataToolsOpen, setIsDataToolsOpen] = useState(false);
@@ -787,6 +828,8 @@ function App() {
   const importFileInputRef = useRef(null);
   const csvImportFileInputRef = useRef(null);
   const cloudBackupFileInputRef = useRef(null);
+  const marketDataRequestGateRef = useRef(createMarketDataRequestGate());
+  const marketDataApplyGateRef = useRef(createMarketDataRequestGate());
   const [csvImportPreview, setCsvImportPreview] = useState(null);
   const [confirmedCsvWarningFingerprint, setConfirmedCsvWarningFingerprint] = useState("");
   const [cloudBackupPreview, setCloudBackupPreview] = useState(null);
@@ -1265,6 +1308,25 @@ function App() {
     () => buildAttentionItems({ assets, exchangeRates, financialGoals }),
     [assets, exchangeRates, financialGoals],
   );
+  const marketDataSelectionCounts = useMemo(
+    () => getMarketDataSelectionCounts(marketDataPreview, marketDataSelection),
+    [marketDataPreview, marketDataSelection],
+  );
+  const stockPreviewRequestSummary = useMemo(
+    () => getStockPreviewRequestSummary(marketDataPreview),
+    [marketDataPreview],
+  );
+  const marketDataActionState = useMemo(
+    () =>
+      getMarketDataActionState({
+        hasPreview: Boolean(marketDataPreview),
+        isChecking: isCheckingMarketData,
+        isApplying: isApplyingMarketData,
+        selectedCount: marketDataSelectionCounts.exchangeRateCount + marketDataSelectionCounts.stockPriceCount,
+        updateEnabled: IS_MARKET_DATA_UPDATE_UI_ENABLED,
+      }),
+    [isApplyingMarketData, isCheckingMarketData, marketDataPreview, marketDataSelectionCounts],
+  );
 
   useEffect(() => {
     if (assetOverviewGroups.length === 0) {
@@ -1557,6 +1619,152 @@ function App() {
       setExchangeRateStatus(`儲存失敗，資料未變更：${handleCloudWriteError(error, "D1 匯率寫入失敗。")}`);
     } finally {
       setIsSavingCloudSettings(false);
+    }
+  }
+
+  async function checkMarketDataUpdates() {
+    if (!IS_MARKET_DATA_UPDATE_UI_ENABLED) {
+      setMarketDataStatus({
+        state: "disabled",
+        message: "行情更新目前停用；不會呼叫外部行情 provider。",
+      });
+      return;
+    }
+
+    if (!marketDataRequestGateRef.current.tryStart()) return;
+
+    setIsCheckingMarketData(true);
+    setMarketDataStatus({
+      state: "fetching",
+      message: "正在檢查匯率與股票 / ETF 最新可用收盤價...",
+    });
+
+    try {
+      const exchangeRequest = buildExchangeRatePreviewRequest(exchangeRates);
+      const stockRequest = buildStockPricePreviewRequest(assets);
+      const [exchangeResult, stockResult] = await Promise.allSettled([
+        appDataSource.previewMarketExchangeRates(exchangeRequest),
+        appDataSource.previewMarketStockPrices(stockRequest),
+      ]);
+      const preview = mergeMarketDataPreviewResults(exchangeResult, stockResult);
+      const selection = createMarketDataSelection(preview);
+      const hasError = exchangeResult.status === "rejected" || stockResult.status === "rejected";
+      const warningCount = (preview.exchangeRates.warnings ?? []).length + (preview.stockPrices.warnings ?? []).length;
+      const stockSummary = getStockPreviewRequestSummary(preview);
+      const stockSummaryText = stockSummary
+        ? `美股 symbol：成功 ${stockSummary.successfulSymbolCount}、失敗 ${stockSummary.failedSymbolCount}、略過 ${stockSummary.skippedSymbolCount}。`
+        : "";
+      let statusMessage = `已取得 preview，請確認後套用選取更新。${stockSummaryText}`;
+
+      if (hasError) {
+        statusMessage = `部分行情 preview 失敗；可套用的項目仍可選取。${stockSummaryText}`;
+      } else if (stockSummary?.stoppedEarly) {
+        statusMessage = `Provider 額度限制已停止後續查詢；已保留成功結果。${stockSummaryText}`;
+      } else if (warningCount > 0) {
+        statusMessage = `已取得 preview，${warningCount} 項需要人工確認。${stockSummaryText}`;
+      }
+
+      setMarketDataPreview(preview);
+      setMarketDataSelection(selection);
+      setMarketDataStatus({
+        state: hasError || stockSummary?.stoppedEarly ? "partial" : warningCount > 0 ? "needs_review" : "preview",
+        message: statusMessage,
+      });
+    } catch (error) {
+      setMarketDataPreview(null);
+      setMarketDataSelection({ exchangeRates: {}, stockPrices: {} });
+      setMarketDataStatus({
+        state: "error",
+        message: error.message || "行情 preview 失敗。",
+      });
+    } finally {
+      marketDataRequestGateRef.current.finish();
+      setIsCheckingMarketData(false);
+    }
+  }
+
+  function toggleMarketDataExchange(currency, checked) {
+    setMarketDataSelection((current) => ({
+      ...current,
+      exchangeRates: {
+        ...current.exchangeRates,
+        [currency]: checked,
+      },
+    }));
+  }
+
+  function toggleMarketDataPrice(assetId, checked) {
+    setMarketDataSelection((current) => ({
+      ...current,
+      stockPrices: {
+        ...current.stockPrices,
+        [assetId]: checked,
+      },
+    }));
+  }
+
+  async function applySelectedMarketDataUpdates() {
+    if (!marketDataPreview) {
+      setMarketDataStatus({ state: "error", message: "請先檢查行情更新。" });
+      return;
+    }
+
+    const selectionCounts = getMarketDataSelectionCounts(marketDataPreview, marketDataSelection);
+    if (selectionCounts.exchangeRateCount + selectionCounts.stockPriceCount === 0) {
+      setMarketDataStatus({ state: "error", message: "請至少選取一個可套用項目。" });
+      return;
+    }
+
+    if (!marketDataApplyGateRef.current.tryStart()) return;
+
+    try {
+      setIsApplyingMarketData(true);
+      const appliedAt = new Date().toISOString();
+      const nextData = applyMarketDataPreviewSelection({
+        assets,
+        exchangeRates,
+        preview: marketDataPreview,
+        selection: marketDataSelection,
+        appliedAt,
+      });
+      let savedRates = nextData.exchangeRates;
+      let savedAssets = nextData.assets;
+
+      if (selectionCounts.exchangeRateCount > 0) {
+        savedRates = isCloudMode ? await appDataSource.saveExchangeRates(nextData.exchangeRates) : nextData.exchangeRates;
+      }
+
+      if (selectionCounts.stockPriceCount > 0) {
+        if (isCloudMode) {
+          const savedAssetRows = [];
+
+          for (const priceItem of nextData.selectedPrices) {
+            const nextAsset = nextData.assets.find((asset) => asset.id === priceItem.assetId);
+            if (nextAsset) {
+              savedAssetRows.push(await appDataSource.updateAsset(nextAsset.id, nextAsset));
+            }
+          }
+
+          savedAssets = assets.map((asset) => savedAssetRows.find((savedAsset) => savedAsset.id === asset.id) ?? asset);
+        }
+      }
+
+      setExchangeRates(savedRates);
+      setAssets(savedAssets);
+      setMarketDataPreview(null);
+      setMarketDataSelection({ exchangeRates: {}, stockPrices: {} });
+      setMarketDataStatus({
+        state: "applied",
+        message: `已套用 ${nextData.appliedCount} 項行情更新；建議重新產生報告並視需要建立 snapshot。`,
+      });
+    } catch (error) {
+      setMarketDataStatus({
+        state: "error",
+        message: `套用失敗，資料未變更：${handleCloudWriteError(error, "行情更新套用失敗。")}`,
+      });
+    } finally {
+      marketDataApplyGateRef.current.finish();
+      setIsApplyingMarketData(false);
     }
   }
 
@@ -2306,6 +2514,153 @@ function App() {
                 (isCloudMode
                   ? `目前來源：${exchangeRates.provider}。Cloud Mode v1.1 的匯率由 D1 read/write 管理。`
                   : `目前來源：${exchangeRates.provider}。公開端點會抓取最新可用資料，必要時可手動覆寫。`)}
+            </p>
+          </div>
+        )}
+      </section>
+
+      <section className="panel market-data-section">
+        <div className="market-data-header">
+          <div>
+            <h2>行情更新</h2>
+            <p>手動檢查匯率與股票 / ETF 最新可用收盤價；先預覽，確認後才套用。</p>
+          </div>
+          <div className="market-data-actions">
+            <button
+              className="market-data-check-button secondary-action"
+              type="button"
+              onClick={checkMarketDataUpdates}
+              disabled={marketDataActionState.checkDisabled}
+              aria-busy={marketDataActionState.checkAriaBusy}
+            >
+              {isCheckingMarketData && <span className="market-data-spinner" aria-hidden="true" />}
+              {marketDataActionState.checkLabel}
+            </button>
+            {marketDataPreview && <small className="market-data-action-note">重新檢查會再次使用 provider request 額度</small>}
+          </div>
+        </div>
+
+        <div className={`market-data-status is-${marketDataStatus.state}`} role="status" aria-live="polite">
+          <strong>{IS_MARKET_DATA_UPDATE_UI_ENABLED ? "手動更新" : "目前停用"}</strong>
+          <span>{marketDataStatus.message}</span>
+        </div>
+
+        {!IS_MARKET_DATA_UPDATE_UI_ENABLED && (
+          <p className="market-data-note">
+            如需啟用，Cloudflare Pages 需設定 ENABLE_MARKET_DATA_UPDATE=true 與 provider API key；目前不會呼叫外部行情 API。
+          </p>
+        )}
+
+        {marketDataPreview && (
+          <div className="market-data-preview">
+            <div className="market-data-preview-header">
+              <div>
+                <strong>Preview 結果</strong>
+                <span>來源：{marketDataPreview.exchangeRates.provider || marketDataPreview.stockPrices.provider || "未設定"}</span>
+                {stockPreviewRequestSummary && (
+                  <span>
+                    美股 symbol：成功 {stockPreviewRequestSummary.successfulSymbolCount} · 失敗{" "}
+                    {stockPreviewRequestSummary.failedSymbolCount} · 略過 {stockPreviewRequestSummary.skippedSymbolCount} ·
+                    provider requests {stockPreviewRequestSummary.providerCallCount}
+                  </span>
+                )}
+              </div>
+              <button
+                className="market-data-apply-button primary-action"
+                type="button"
+                disabled={marketDataActionState.applyDisabled}
+                aria-busy={marketDataActionState.applyAriaBusy}
+                onClick={applySelectedMarketDataUpdates}
+              >
+                {marketDataActionState.applyLabel}
+              </button>
+            </div>
+
+            <div className="market-data-grid">
+              <article className="market-data-panel">
+                <div className="market-data-panel-title">
+                  <strong>匯率</strong>
+                  <span>{marketDataPreview.exchangeRates.ratesPreview.length} 項</span>
+                </div>
+                {marketDataPreview.exchangeRates.ratesPreview.length === 0 ? (
+                  <p className="market-data-empty">沒有可顯示的匯率 preview。</p>
+                ) : (
+                  <div className="market-data-list">
+                    {marketDataPreview.exchangeRates.ratesPreview.map((item) => {
+                      const isDisabled = !isApplicableExchangeRatePreview(item);
+                      return (
+                        <label className={`market-data-row is-${item.status}`} key={item.currency}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(marketDataSelection.exchangeRates[item.currency])}
+                            disabled={isDisabled || isApplyingMarketData}
+                            onChange={(event) => toggleMarketDataExchange(item.currency, event.target.checked)}
+                          />
+                          <span className="market-data-row-main">
+                            <span className="market-data-row-title">
+                              {item.currency}
+                              <span>{getMarketDataStatusLabel(item.status, item.errorCode)}</span>
+                            </span>
+                            <span>
+                              {item.oldRateToTwd ? formatRate(item.oldRateToTwd) : "未設定"} →{" "}
+                              {item.newRateToTwd ? formatRate(item.newRateToTwd) : "無資料"} TWD
+                            </span>
+                            <small>
+                              {formatChangePercent(item.changePercent)} · {item.source} · {formatDateTime(item.fetchedAt)}
+                            </small>
+                            {item.message && <small>{item.message}</small>}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </article>
+
+              <article className="market-data-panel">
+                <div className="market-data-panel-title">
+                  <strong>股票 / ETF 收盤價</strong>
+                  <span>{marketDataPreview.stockPrices.pricePreview.length} 項</span>
+                </div>
+                {marketDataPreview.stockPrices.pricePreview.length === 0 ? (
+                  <p className="market-data-empty">沒有可顯示的股票 / ETF preview。</p>
+                ) : (
+                  <div className="market-data-list">
+                    {marketDataPreview.stockPrices.pricePreview.map((item) => {
+                      const isDisabled = !isApplicablePricePreview(item);
+                      return (
+                        <label className={`market-data-row is-${item.status}`} key={item.assetId}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(marketDataSelection.stockPrices[item.assetId])}
+                            disabled={isDisabled || isApplyingMarketData}
+                            onChange={(event) => toggleMarketDataPrice(item.assetId, event.target.checked)}
+                          />
+                          <span className="market-data-row-main">
+                            <span className="market-data-row-title">
+                              {item.ticker || item.name}
+                              <span>{getMarketDataStatusLabel(item.status, item.errorCode)}</span>
+                            </span>
+                            <span>
+                              {item.oldMarketPrice ? formatMoney(item.oldMarketPrice, item.currency) : "未設定"} →{" "}
+                              {item.newMarketPrice ? formatMoney(item.newMarketPrice, item.priceCurrency) : "無資料"}
+                            </span>
+                            <small>
+                              {item.market} · {item.basis} · {item.priceDate || "無日期"} ·{" "}
+                              {formatChangePercent(item.changePercent)}
+                            </small>
+                            {item.message && <small>{item.message}</small>}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </article>
+            </div>
+
+            <p className="market-data-note">
+              需確認項目預設不勾選；失敗、略過或沒有有效新值的項目不可套用。套用只更新匯率與市價欄位，不會改股數、成本、現金或貸款。
             </p>
           </div>
         )}

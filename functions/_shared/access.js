@@ -5,8 +5,15 @@ export const ACCESS_AUTH_COOKIE = "CF_Authorization";
 export const ACCESS_CONFIG_MISSING = "access-config-missing";
 export const ACCESS_TOKEN_MISSING = "access-token-missing";
 export const ACCESS_TOKEN_INVALID = "access-token-invalid";
+export const LOCAL_DEV_AUTH_USER = {
+  id: "local-dev-user",
+  sub: "local-dev-user",
+  email: "local-dev@localhost.invalid",
+  name: "Local Development User",
+};
 
 const CLOCK_TOLERANCE_SECONDS = 60;
+const LOCAL_DEV_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1"]);
 
 function decodeCookieValue(value) {
   try {
@@ -30,6 +37,25 @@ function getCookieValue(cookieHeader, name) {
 
 export function getAccessJwtFromRequest(request) {
   return request.headers.get(ACCESS_JWT_HEADER) || getCookieValue(request.headers.get("Cookie"), ACCESS_AUTH_COOKIE);
+}
+
+function isLocalDevAuthEnabled(env = {}) {
+  return String(env.LOCAL_DEV_AUTH ?? "").trim() === "true";
+}
+
+function normalizeRequestHostname(request) {
+  try {
+    const hostname = new URL(request.url).hostname.toLowerCase();
+    return hostname.replace(/^\[(.*)\]$/, "$1");
+  } catch {
+    return "";
+  }
+}
+
+export function isLocalDevAuthRequest(request, env = {}) {
+  if (!isLocalDevAuthEnabled(env)) return false;
+
+  return LOCAL_DEV_HOSTNAMES.has(normalizeRequestHostname(request));
 }
 
 function base64UrlToBytes(value) {
@@ -195,6 +221,10 @@ export async function verifyAccessJwt(token, env = {}, options = {}) {
 }
 
 export async function getCurrentUserFromRequest(request, env = {}, options = {}) {
+  if (isLocalDevAuthRequest(request, env)) {
+    return { ...LOCAL_DEV_AUTH_USER };
+  }
+
   const token = getAccessJwtFromRequest(request);
   if (!token) return null;
 

@@ -166,6 +166,18 @@ export function createCloudStore({ apiBaseUrl = DEFAULT_API_BASE_URL, fetcher = 
     saveExchangeRates(exchangeRates) {
       return this.updateExchangeRates(exchangeRates);
     },
+    previewMarketExchangeRates(payload) {
+      return request("/market-data/exchange-rates/preview", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
+    previewMarketStockPrices(payload) {
+      return request("/market-data/stock-prices/preview", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
     importLocalBackup(backupPayload) {
       return request("/import-local-backup", {
         method: "POST",

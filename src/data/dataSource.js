@@ -197,6 +197,20 @@ export function createDataSource({
         ? activeStore.saveFinancialGoals(financialGoals)
         : activeStore.updateFinancialGoals(financialGoals);
     },
+    previewMarketExchangeRates(payload) {
+      if (typeof cloudStore.previewMarketExchangeRates !== "function") {
+        return Promise.reject(new Error("Market data preview API is not configured."));
+      }
+
+      return cloudStore.previewMarketExchangeRates(payload);
+    },
+    previewMarketStockPrices(payload) {
+      if (typeof cloudStore.previewMarketStockPrices !== "function") {
+        return Promise.reject(new Error("Market data preview API is not configured."));
+      }
+
+      return cloudStore.previewMarketStockPrices(payload);
+    },
     loadSnapshot() {
       const snapshotValue = activeStore.loadSnapshot();
 

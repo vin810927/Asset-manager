@@ -3,7 +3,9 @@ import {
   ACCESS_CONFIG_MISSING,
   ACCESS_JWT_HEADER,
   ACCESS_TOKEN_INVALID,
+  LOCAL_DEV_AUTH_USER,
   getCurrentUserFromRequest,
+  isLocalDevAuthRequest,
   requireAuthenticatedUser,
 } from "../../functions/_shared/access.js";
 import { buildHealthPayload } from "../../functions/api/health.js";
@@ -68,6 +70,10 @@ function requestWithToken(token) {
   });
 }
 
+function requestTo(url, headers = {}) {
+  return new Request(url, { headers });
+}
+
 function createD1Binding() {
   return {
     prepare(sql) {
@@ -81,6 +87,80 @@ function createD1Binding() {
 }
 
 describe("Cloudflare Access JWT helper", () => {
+  it.each(["http://localhost:5173/api/health", "http://127.0.0.1:5173/api/health", "http://[::1]:5173/api/health"])(
+    "LOCAL_DEV_AUTH=true 且 loopback hostname 時回固定 local identity: %s",
+    async (url) => {
+      const request = requestTo(url, {
+        Authorization: "Bearer fake-user-token",
+        "X-User-Email": "attacker@example.com",
+        "X-User-Id": "attacker-user",
+      });
+
+      await expect(getCurrentUserFromRequest(request, { LOCAL_DEV_AUTH: "true" })).resolves.toEqual(
+        LOCAL_DEV_AUTH_USER,
+      );
+      await expect(requireAuthenticatedUser(request, { LOCAL_DEV_AUTH: "true" })).resolves.toEqual(
+        LOCAL_DEV_AUTH_USER,
+      );
+      expect(isLocalDevAuthRequest(request, { LOCAL_DEV_AUTH: "true" })).toBe(true);
+    },
+  );
+
+  it("LOCAL_DEV_AUTH=false 時 localhost 不得使用 stub，缺 token 仍拒絕", async () => {
+    const request = requestTo("http://localhost:5173/api/health");
+
+    await expect(getCurrentUserFromRequest(request, { LOCAL_DEV_AUTH: "false" })).resolves.toBeNull();
+    await expect(requireAuthenticatedUser(request, { LOCAL_DEV_AUTH: "false" })).rejects.toMatchObject({
+      status: 401,
+    });
+  });
+
+  it("LOCAL_DEV_AUTH 未設定時 localhost 不得使用 stub", async () => {
+    const request = requestTo("http://localhost:5173/api/health");
+
+    await expect(getCurrentUserFromRequest(request, {})).resolves.toBeNull();
+  });
+
+  it.each([
+    "https://asset-manager-30u.pages.dev/api/health",
+    "https://7e04689.asset-agent.pages.dev/api/health",
+  ])("LOCAL_DEV_AUTH=true 但非 localhost hostname 時不得使用 stub: %s", async (url) => {
+    const request = requestTo(url);
+
+    await expect(getCurrentUserFromRequest(request, { LOCAL_DEV_AUTH: "true" })).resolves.toBeNull();
+    await expect(requireAuthenticatedUser(request, { LOCAL_DEV_AUTH: "true" })).rejects.toMatchObject({
+      status: 401,
+    });
+    expect(isLocalDevAuthRequest(request, { LOCAL_DEV_AUTH: "true" })).toBe(false);
+  });
+
+  it("LOCAL_DEV_AUTH=true 但 production hostname 有有效 Access JWT 時仍走真實 JWT identity", async () => {
+    const { token, jwks } = await createSignedAccessJwt();
+    const request = requestTo("https://asset-manager-30u.pages.dev/api/health", {
+      [ACCESS_JWT_HEADER]: token,
+      "X-User-Email": "attacker@example.com",
+    });
+
+    await expect(
+      getCurrentUserFromRequest(
+        request,
+        {
+          ...ACCESS_ENV,
+          LOCAL_DEV_AUTH: "true",
+        },
+        {
+          fetchJwks: async () => jwks.keys,
+          now: () => NOW_SECONDS * 1000,
+        },
+      ),
+    ).resolves.toEqual({
+      id: "user-subject",
+      sub: "user-subject",
+      email: "owner@example.com",
+      name: "Asset Owner",
+    });
+  });
+
   it("missing token returns null user and requireAuthenticatedUser returns 401", async () => {
     const request = requestWithToken("");
 

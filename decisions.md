@@ -1,5 +1,31 @@
 # Decisions
 
+## 2026-06-30：v1.7 手動行情更新採 preview-first
+
+### 決策
+新增 manual market data update foundation，分成 server-side provider abstraction、preview API 與前端 preview / apply flow。`ENABLE_MARKET_DATA_UPDATE` 與 `VITE_ENABLE_MARKET_DATA_UPDATE` 預設停用；server flag 不是字串 `true` 時，`/api/market-data/*/preview` 第一層直接拒絕，不呼叫外部 provider。
+
+匯率 provider 採 ExchangeRate-API，使用 `EXCHANGE_RATE_API_KEY`，server 端一律 normalize 成 `rateToTwd`。若 provider 回 TWD base，`conversion_rates.USD` 代表 `1 TWD = X USD`，因此 `USD rateToTwd = 1 / X`；若 fallback base 不是 TWD，則用 `baseToTwd / baseToCurrency` 換算。
+
+美股 / ETF latest close provider 採 Alpha Vantage `TIME_SERIES_DAILY`，使用 `MARKET_DATA_PROVIDER=alpha_vantage` 與 `MARKET_DATA_API_KEY`，只取最新可用 daily close，`basis` 固定為 `latest-close`。請求先以 provider + market + normalized ticker + price currency 建立 lookup key，同 symbol 的多筆資產只查一次，再把結果映射回各 assetId。不同 symbol 採最大併發 1 的序列查詢，不自動 retry；Alpha Vantage 回 `Note`、`Information` 或 HTTP 429 時視為 quota reached，該 symbol 回 failed，後續未送出的 symbol 回 `needs_review` / `provider_request_skipped`，並保留已成功的 partial preview。Missing time series 或 invalid symbol 只標記該 symbol failed，不 crash，也不阻止後續 symbol。台股 / unknown market 不送往 Alpha Vantage，直接回 `needs_review` 與 unsupported 說明。
+
+Preview API 只負責驗證 Cloudflare Access JWT、fetch / normalize provider response、回傳 old / new / source / fetchedAt / warning，不讀 D1 raw assets，也不寫 D1。前端使用目前已載入的 assets / exchangeRates 建立 sanitized request，收到 preview 後讓使用者選取項目；只有按「套用選取更新」後才透過既有 dataSource 寫入 exchangeRates 或 asset `marketPrice` / `marketPriceUpdatedAt`。Cloud Mode 寫入仍走既有 stale data guard。
+
+行情操作採明確兩層 hierarchy：「檢查 / 重新檢查行情」是只呼叫 provider 取得 preview 的 secondary action；「套用選取更新」是唯一正式寫入資料的 primary action。Checkbox、selection count 與 apply function 共用 eligibility helper：只有 `ready`、`unchanged` 或 `needs_review` 且新值為有限正數的項目可套用；failed、quota skipped、unsupported 或缺少有效新值一律 disabled。即使 selection state 被手動注入 invalid item，apply 前仍會再次過濾。
+
+為了讓 Wrangler Pages dev 可做本機 E2E，Access shared helper 支援 `LOCAL_DEV_AUTH=true` 的固定 local identity，但必須同時符合 request hostname 是 `localhost`、`127.0.0.1` 或 `::1`。Production / preview Pages hostname 即使誤設 `LOCAL_DEV_AUTH=true`，仍不會使用 stub，會走原本 Cloudflare Access JWT issuer / audience / signature / exp / nbf 驗證。Local identity 固定為 `local-dev-user` / `local-dev@localhost.invalid`，不信任前端 header、email、user_id 或 Authorization 內容。
+
+### 理由
+- 行情資料可能有 provider 錯誤、幣別 mismatch、市場判定不明或大幅波動，不能直接覆蓋使用者資料
+- Preview-first 可以讓 failed item 不可套用、needsReview 預設不勾選，保留人工確認
+- Alpha Vantage 免費額度有限，因此只做手動 preview，不做自動重試或排程
+- 台股資料來源若未確認官方 endpoint 與 response schema，不應硬接，以免錯價或錯幣別
+
+### 限制
+v1.7 不是即時盤中報價，不做投資建議，不新增 D1 schema / migration，不新增 dependency，不寫 secret，不做 Cloudflare Cron / scheduled update，不做自動 D1 write，不做 snapshot 自動建立，也不呼叫 OpenAI API。D1 assets 目前只持久化 `marketPrice` 與 `marketPriceUpdatedAt`；provider source / fetchedAt / basis 先保留在 preview 與前端套用狀態，不新增 schema 欄位。`LOCAL_DEV_AUTH` 預設停用，只能用於本機 loopback 驗收。
+
+---
+
 ## 2026-06-29：v1.6.2 AI report 預設由 feature flag 停用
 
 ### 決策

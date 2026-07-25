@@ -1360,10 +1360,9 @@ h2 {
 }
 
 .exchange-shell {
-  position: relative;
-  z-index: 12;
-  display: flex;
-  justify-content: flex-end;
+  display: grid;
+  gap: 8px;
+  justify-items: end;
   margin-bottom: 12px;
 }
 
@@ -1454,14 +1453,15 @@ h2 {
 }
 
 .exchange-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  width: min(760px, calc(100vw - 48px));
-  max-height: min(520px, calc(100vh - 168px));
-  overflow: auto;
-  padding: 16px;
-  box-shadow: 0 24px 70px rgba(23, 32, 51, 0.18);
+  position: static;
+  justify-self: stretch;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  max-height: none;
+  overflow: visible;
+  padding: 14px;
+  box-shadow: none;
 }
 
 .exchange-meta {
@@ -1481,22 +1481,28 @@ h2 {
 
 .exchange-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  box-sizing: border-box;
+  max-width: 100%;
 }
 
 .exchange-rate-row {
   display: grid;
-  grid-template-columns: minmax(106px, 1fr) minmax(118px, auto);
-  gap: 8px 10px;
-  align-items: center;
+  grid-template-columns: 1fr;
+  gap: 9px;
+  align-items: stretch;
   border: 1px solid var(--row-border);
   border-radius: 12px;
   background: var(--row-bg);
+  box-sizing: border-box;
+  min-width: 0;
   padding: 8px 9px;
 }
 
 .exchange-rate-meta {
+  display: grid;
+  gap: 3px;
   min-width: 0;
 }
 
@@ -1534,29 +1540,268 @@ h2 {
 
 .exchange-rate-edit-controls {
   display: grid;
-  grid-template-columns: minmax(88px, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
   align-items: center;
+  min-width: 0;
 }
 
 .exchange-rate-input {
+  box-sizing: border-box;
   min-height: 34px;
+  min-width: 0;
+  max-width: 100%;
   padding: 7px 9px;
   font-size: 0.8rem;
 }
 
 .exchange-rate-base-value {
-  justify-self: end;
+  justify-self: start;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--soft-text);
   font-size: 0.76rem;
   font-weight: 850;
   white-space: nowrap;
 }
 
+@media (max-width: 900px) {
+  .exchange-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .rate-status {
   margin: 12px 0 0;
   color: var(--soft-text);
   font-size: 0.88rem;
+}
+
+.market-data-section {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.market-data-header,
+.market-data-preview-header,
+.market-data-panel-title {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.market-data-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.market-data-header p,
+.market-data-note,
+.market-data-empty {
+  margin: 4px 0 0;
+  color: var(--soft-text);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.market-data-actions {
+  display: grid;
+  gap: 5px;
+  justify-content: flex-end;
+  justify-items: end;
+}
+
+.market-data-check-button,
+.market-data-apply-button {
+  min-height: 38px;
+  border-radius: 999px;
+  padding: 0 15px;
+  font-weight: 850;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.market-data-check-button {
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--row-border));
+  background: color-mix(in srgb, var(--control-bg) 78%, var(--panel-bg));
+  color: var(--text);
+}
+
+.market-data-check-button:hover:not(:disabled),
+.market-data-check-button:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--row-border));
+  background: color-mix(in srgb, var(--accent-soft) 54%, var(--control-bg));
+}
+
+.market-data-apply-button {
+  min-height: 42px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 900;
+}
+
+.market-data-apply-button:hover:not(:disabled),
+.market-data-apply-button:focus-visible {
+  background: color-mix(in srgb, var(--accent) 88%, #000);
+}
+
+.market-data-check-button:disabled,
+.market-data-apply-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.market-data-action-note {
+  max-width: 280px;
+  color: var(--soft-text);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.market-data-spinner {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+  border: 2px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-top-color: currentColor;
+  border-radius: 999px;
+  animation: market-data-spin 0.8s linear infinite;
+}
+
+@keyframes market-data-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.market-data-status {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--row-border);
+  border-radius: 12px;
+  background: var(--row-bg);
+  padding: 9px 10px;
+  color: var(--soft-text);
+  font-size: 0.84rem;
+}
+
+.market-data-status strong {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.market-data-status.is-error,
+.market-data-status.is-needs_review,
+.market-data-status.is-partial {
+  border-color: color-mix(in srgb, var(--warning-border) 70%, var(--row-border));
+  background: color-mix(in srgb, var(--warning-bg) 54%, var(--row-bg));
+}
+
+.market-data-preview {
+  display: grid;
+  gap: 12px;
+}
+
+.market-data-preview-header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.market-data-preview-header span {
+  color: var(--soft-text);
+  font-size: 0.8rem;
+}
+
+.market-data-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.market-data-panel {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  align-content: start;
+  border: 1px solid var(--row-border);
+  border-radius: 14px;
+  background: var(--row-bg);
+  padding: 10px;
+}
+
+.market-data-panel-title span {
+  color: var(--soft-text);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.market-data-list {
+  display: grid;
+  gap: 7px;
+}
+
+.market-data-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  border: 1px solid var(--row-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-bg) 70%, var(--row-bg));
+  padding: 8px;
+  text-align: left;
+}
+
+.market-data-row input {
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  flex: 0 0 auto;
+}
+
+.market-data-row-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  font-size: 0.84rem;
+}
+
+.market-data-row-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 900;
+}
+
+.market-data-row-title span {
+  border-radius: 999px;
+  background: var(--control-bg);
+  color: var(--soft-text);
+  padding: 2px 6px;
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.market-data-row-main small {
+  color: var(--soft-text);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.market-data-row.is-needs_review {
+  border-color: color-mix(in srgb, var(--warning-border) 72%, var(--row-border));
+  background: color-mix(in srgb, var(--warning-bg) 40%, var(--row-bg));
+}
+
+.market-data-row.is-failed {
+  opacity: 0.64;
 }
 
 .form-panel {
@@ -2788,7 +3033,7 @@ select:focus {
   }
 
   .exchange-shell {
-    justify-content: flex-start;
+    justify-items: start;
   }
 
   .exchange-rate-title span {
@@ -2800,10 +3045,11 @@ select:focus {
   }
 
   .exchange-popover {
-    right: auto;
-    left: 0;
+    box-sizing: border-box;
     width: 100%;
-    max-height: calc(100vh - 128px);
+    max-width: 100%;
+    max-height: none;
+    overflow: visible;
   }
 
   .exchange-rate-actions {
@@ -2826,6 +3072,36 @@ select:focus {
 
   .exchange-rate-edit-controls {
     grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .market-data-header,
+  .market-data-preview-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .market-data-actions,
+  .market-data-check-button,
+  .market-data-apply-button {
+    width: 100%;
+  }
+
+  .market-data-actions {
+    justify-items: stretch;
+  }
+
+  .market-data-action-note {
+    max-width: none;
+    text-align: left;
+  }
+
+  .market-data-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .market-data-status {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .add-asset-panel,
