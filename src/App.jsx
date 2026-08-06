@@ -2615,20 +2615,24 @@ function App() {
           <div className="market-data-preview">
             <div className="market-data-grid">
               <article className="market-data-panel">
-                <div className="market-data-panel-title">
-                  <div>
-                    <strong>匯率 preview</strong>
-                    <span>{exchangeRatesPreview?.ratesPreview?.length ?? 0} 項</span>
+                <div className="market-data-preview-header">
+                  <div className="market-data-preview-title-group">
+                    <strong className="market-data-preview-title">匯率 preview</strong>
+                    <span className="market-data-preview-count">
+                      {exchangeRatesPreview?.ratesPreview?.length ?? 0} 項
+                    </span>
                   </div>
-                  <button
-                    className="market-data-apply-button primary-action"
-                    type="button"
-                    disabled={exchangeRateActionState.applyDisabled}
-                    aria-busy={exchangeRateActionState.applyAriaBusy}
-                    onClick={applySelectedExchangeRateUpdates}
-                  >
-                    {exchangeRateActionState.applyLabel}
-                  </button>
+                  <div className="market-data-preview-actions">
+                    <button
+                      className="market-data-apply-button primary-action"
+                      type="button"
+                      disabled={exchangeRateActionState.applyDisabled}
+                      aria-busy={exchangeRateActionState.applyAriaBusy}
+                      onClick={applySelectedExchangeRateUpdates}
+                    >
+                      {exchangeRateActionState.applyLabel}
+                    </button>
+                  </div>
                 </div>
 
                 {exchangeRatesSummary && (
@@ -2681,20 +2685,24 @@ function App() {
               </article>
 
               <article className="market-data-panel">
-                <div className="market-data-panel-title">
-                  <div>
-                    <strong>美股 / ETF 收盤價 preview</strong>
-                    <span>{usStockPricePreview?.pricePreview?.length ?? 0} 項</span>
+                <div className="market-data-preview-header">
+                  <div className="market-data-preview-title-group">
+                    <strong className="market-data-preview-title">美股 / ETF 收盤價 preview</strong>
+                    <span className="market-data-preview-count">
+                      {usStockPricePreview?.pricePreview?.length ?? 0} 項
+                    </span>
                   </div>
-                  <button
-                    className="market-data-apply-button primary-action"
-                    type="button"
-                    disabled={usStockActionState.applyDisabled}
-                    aria-busy={usStockActionState.applyAriaBusy}
-                    onClick={applySelectedUsStockUpdates}
-                  >
-                    {usStockActionState.applyLabel}
-                  </button>
+                  <div className="market-data-preview-actions">
+                    <button
+                      className="market-data-apply-button primary-action"
+                      type="button"
+                      disabled={usStockActionState.applyDisabled}
+                      aria-busy={usStockActionState.applyAriaBusy}
+                      onClick={applySelectedUsStockUpdates}
+                    >
+                      {usStockActionState.applyLabel}
+                    </button>
+                  </div>
                 </div>
 
                 {usStocksSummary && (

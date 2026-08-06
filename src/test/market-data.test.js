@@ -867,6 +867,38 @@ describe("v1.7 market data frontend helpers", () => {
     );
   });
 
+  it("匯率與美股 preview header 使用一致且不可擠壓 count 的結構", () => {
+    const appSource = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
+    const stylesSource = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+    const headerMatches = appSource.match(/className="market-data-preview-header"/g) ?? [];
+    const titleGroupMatches = appSource.match(/className="market-data-preview-title-group"/g) ?? [];
+    const countMatches = appSource.match(/className="market-data-preview-count"/g) ?? [];
+    const actionMatches = appSource.match(/className="market-data-preview-actions"/g) ?? [];
+    const countBlock = stylesSource.match(/\.market-data-preview-count\s*\{([^}]*)\}/)?.[1] ?? "";
+    const actionBlock = stylesSource.match(/\.market-data-preview-actions\s*\{([^}]*)\}/)?.[1] ?? "";
+    const titleGroupBlock = stylesSource.match(/\.market-data-preview-title-group\s*\{([^}]*)\}/)?.[1] ?? "";
+    const previewHeaderBlock = stylesSource.match(/\.market-data-preview-header\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(headerMatches).toHaveLength(2);
+    expect(titleGroupMatches).toHaveLength(2);
+    expect(countMatches).toHaveLength(2);
+    expect(actionMatches).toHaveLength(2);
+    expect(appSource).toMatch(/market-data-preview-count[\s\S]{0,120}ratesPreview\?\.length \?\? 0} 項/);
+    expect(appSource).toMatch(/market-data-preview-count[\s\S]{0,120}pricePreview\?\.length \?\? 0} 項/);
+    expect(titleGroupBlock).toContain("flex: 1 1 auto");
+    expect(titleGroupBlock).toContain("min-width: 0");
+    expect(countBlock).toContain("flex: 0 0 auto");
+    expect(countBlock).toContain("white-space: nowrap");
+    expect(actionBlock).toContain("flex: 0 0 auto");
+    expect(previewHeaderBlock).not.toMatch(/(?:min-)?height\s*:|position\s*:\s*absolute|margin[^:]*:\s*-/);
+    expect(stylesSource).toMatch(
+      /@media \(max-width: 860px\)[\s\S]*?\.market-data-preview-header\s*\{[\s\S]*?flex-direction: column;/,
+    );
+    expect(stylesSource).toMatch(
+      /@media \(max-width: 860px\)[\s\S]*?\.market-data-preview-actions \.market-data-apply-button\s*\{[\s\S]*?width: 100%;[\s\S]*?white-space: nowrap;/,
+    );
+  });
+
   it("前端 feature flag 預設停用", () => {
     expect(isMarketDataUpdateUiEnabled({})).toBe(false);
     expect(isMarketDataUpdateUiEnabled({ VITE_ENABLE_MARKET_DATA_UPDATE: "false" })).toBe(false);
