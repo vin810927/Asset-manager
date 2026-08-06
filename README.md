@@ -16,6 +16,7 @@
 - v1.5 優化 deterministic report UX，並新增 AI-ready JSON 與 Markdown report export
 - v1.6 新增 AI 報告草稿；後端只接收 AI-ready JSON，不直接讀 raw assets，不寫入 D1
 - v1.7 新增手動行情更新 preview foundation，可檢查匯率與股票 / ETF 最新可用收盤價，但預設停用且套用前必須人工確認
+- v1.7.1 將匯率、美股與台股行情操作拆開；匯率與美股各自 preview / apply，台股入口保持停用且不呼叫 provider
 - Cloud Mode 不是自動雙向同步；手機與電腦共用 D1 資料，但需要重新整理或重新讀取才會看到另一端變更
 - 支援資產類型：
   - 現金
@@ -37,7 +38,7 @@
 - 同類型、同幣別、同名稱的非股票資產會合併顯示，明細仍可展開查看
 - 資產明細可依關鍵字、類型、幣別、狀態與排序快速篩選
 - 貸款會依本金、年限、利率與起始日期估算月付金、已繳比例與剩餘本金
-- 可按需更新公開匯率，並以 TWD 估算跨幣別淨資產
+- 可從「行情更新」先檢查公開匯率，人工選取並套用後再以 TWD 估算跨幣別淨資產
 - 支援手動編輯匯率，方便在公開資料延遲或需要保守估值時覆寫
 - 支援手動行情更新 preview；只顯示 old / new / source / fetchedAt / warning，使用者選取並確認後才會更新匯率或市價欄位
 - 支援本地資料可靠性提醒、理財目標設定與 JSON 匯入匯出備份
@@ -97,7 +98,9 @@ v1.6 新增 AI narrative report 草稿。前端流程固定為 deterministic rep
 
 v1.6 仍不做自動雙向同步、merge、override、background sync、offline queue、完整 conflict resolution、scheduled report、scheduled snapshot、email、notification、PDF 或 D1 report storage。
 
-v1.7 新增 manual market data update preview。這不是即時盤中報價，也不是投資建議；只用於資產估值資料更新。`ENABLE_MARKET_DATA_UPDATE` 與 `VITE_ENABLE_MARKET_DATA_UPDATE` 預設都是 false；停用時前端只顯示提示，Pages Function 不會呼叫外部行情 provider。啟用後 API 仍只回 preview，不寫 D1；前端必須由使用者選取項目後才會透過既有 dataSource 寫入 exchangeRates 或 asset marketPrice。匯率使用 ExchangeRate-API adapter，美股 / ETF latest close 使用 Alpha Vantage `TIME_SERIES_DAILY` adapter。美股查詢會先依 provider、market、ticker 與 price currency 去重，再以最大併發 1 逐一查詢；同 ticker 多筆資產只消耗一次 provider request。遇到 Alpha Vantage quota / rate-limit 訊息後會立即停止後續 request，保留先前成功結果，並把未查詢 symbol 標示為 skipped / needsReview。台股 / unknown market 目前不硬接不可驗證 endpoint，會顯示 unsupported / needsReview。「檢查行情」是只取得 preview 的 secondary action；只有「套用選取更新」會正式寫入。Failed、skipped、unsupported 或沒有有限正數新值的項目不可選取；needsReview 預設不勾選，但有有效新值時可由使用者人工選取。
+v1.7 新增 manual market data update preview。這不是即時盤中報價，也不是投資建議；只用於資產估值資料更新。`ENABLE_MARKET_DATA_UPDATE` 與 `VITE_ENABLE_MARKET_DATA_UPDATE` 預設都是 false；停用時前端只顯示提示，Pages Function 不會呼叫外部行情 provider。啟用後 API 仍只回 preview，不寫 D1；前端必須由使用者選取項目後才會透過既有 dataSource 寫入 exchangeRates 或 asset marketPrice。匯率使用 ExchangeRate-API adapter，美股 / ETF latest close 使用 Alpha Vantage `TIME_SERIES_DAILY` adapter。美股查詢會先依 provider、market、ticker 與 price currency 去重，再以最大併發 1 逐一查詢；同 ticker 多筆資產只消耗一次 provider request。遇到 Alpha Vantage quota / rate-limit 訊息後會立即停止後續 request，保留先前成功結果，並把未查詢 symbol 標示為 skipped / needsReview。台股 / unknown market 目前不硬接不可驗證 endpoint。
+
+v1.7.1 將原本合併的「檢查行情更新」拆成「檢查匯率」、「檢查美股收盤價」與 disabled 的「台股尚未支援」。匯率與美股各自持有 fetching、preview、selection、error、summary 與 apply state；查詢或套用其中一類不會清除或覆蓋另一類。所有外部匯率查詢只由「行情更新 → 檢查匯率」觸發，必須經過 preview、人工選取與套用；上方「匯率設定」只保留正式資料時間、展開 / 收合與個別幣別手動儲存。Header 的「最近套用 / 儲存」只取正式套用或手動儲存後寫入各幣別 row 的 `updatedAt`，未套用的 preview `fetchedAt` 與 provider `sourceUpdatedAt` 不會影響顯示；沒有有效正式時間時顯示「尚未更新」。美股 request 只包含前端判定為 US、類型為 stock / ETF 且 ticker 有效的 holdings，TW / unknown market 不會送往 Alpha Vantage。Failed、skipped、unsupported 或沒有有限正數新值的項目不可選取；needsReview 預設不勾選，但有有效新值時可由使用者人工選取。
 
 本機 Pages Functions E2E 可在 `.dev.vars` 設 `LOCAL_DEV_AUTH=true` 使用固定 local identity，但只有 `localhost`、`127.0.0.1` 或 `::1` request 會生效。Production / preview Pages hostname 即使誤設 `LOCAL_DEV_AUTH=true`，仍會走原本 Cloudflare Access JWT 驗證，不會使用 local stub。
 

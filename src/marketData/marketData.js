@@ -25,6 +25,16 @@ export function buildExchangeRatePreviewRequest(exchangeRates) {
   };
 }
 
+function inferHoldingMarket(asset) {
+  const explicitMarket = String(asset?.market ?? "").trim().toUpperCase();
+  if (explicitMarket) return explicitMarket;
+
+  const ticker = String(asset?.ticker ?? "").trim().toUpperCase();
+  if (/^\d+$/.test(ticker)) return "TW";
+  if (/^[A-Z][A-Z.-]*$/.test(ticker)) return "US";
+  return "unknown";
+}
+
 export function buildStockPricePreviewRequest(assets = []) {
   const holdings = (Array.isArray(assets) ? assets : [])
     .filter((asset) => TRADED_ASSET_TYPES.includes(asset?.type))
@@ -32,16 +42,24 @@ export function buildStockPricePreviewRequest(assets = []) {
       assetId: String(asset.id ?? ""),
       type: asset.type,
       name: asset.name ?? "",
-      ticker: asset.ticker ?? "",
-      market: asset.market ?? "",
+      ticker: String(asset.ticker ?? "").trim(),
+      market: inferHoldingMarket(asset),
       exchange: asset.exchange ?? "",
       currency: asset.currency ?? BASE_CURRENCY,
       oldMarketPrice: asset.marketPrice ?? null,
       buyPrice: asset.buyPrice ?? null,
     }))
-    .filter((holding) => holding.assetId);
+    .filter((holding) => holding.assetId && holding.ticker.trim() && holding.market === "US");
 
   return { holdings };
+}
+
+export function requestExchangeRatePreview({ dataSource, exchangeRates }) {
+  return dataSource.previewMarketExchangeRates(buildExchangeRatePreviewRequest(exchangeRates));
+}
+
+export function requestUsStockPricePreview({ dataSource, assets }) {
+  return dataSource.previewMarketStockPrices(buildStockPricePreviewRequest(assets));
 }
 
 function isReadyByDefault(item) {
@@ -105,6 +123,7 @@ export function getStockPreviewRequestSummary(preview) {
 }
 
 export function getMarketDataActionState({
+  scope = "exchangeRates",
   hasPreview = false,
   isChecking = false,
   isApplying = false,
@@ -112,12 +131,24 @@ export function getMarketDataActionState({
   updateEnabled = true,
 } = {}) {
   const applicableCount = Number.isFinite(Number(selectedCount)) ? Math.max(0, Number(selectedCount)) : 0;
+  const labels =
+    scope === "usStocks"
+      ? {
+          check: "檢查美股收盤價",
+          recheck: "重新檢查美股",
+          apply: "套用美股更新",
+        }
+      : {
+          check: "檢查匯率",
+          recheck: "重新檢查匯率",
+          apply: "套用匯率更新",
+        };
 
   return {
-    checkLabel: isChecking ? "檢查中…" : hasPreview ? "重新檢查行情" : "檢查行情更新",
+    checkLabel: isChecking ? "檢查中…" : hasPreview ? labels.recheck : labels.check,
     checkDisabled: !updateEnabled || isChecking || isApplying,
     checkAriaBusy: isChecking,
-    applyLabel: isApplying ? "套用中…" : `套用選取更新（${applicableCount}）`,
+    applyLabel: isApplying ? "套用中…" : `${labels.apply}（${applicableCount}）`,
     applyDisabled: isChecking || isApplying || applicableCount === 0,
     applyAriaBusy: isApplying,
   };
@@ -136,6 +167,14 @@ export function createMarketDataSelection(preview) {
   }
 
   return { exchangeRates, stockPrices };
+}
+
+export function createExchangeRateSelection(preview) {
+  return createMarketDataSelection({ exchangeRates: preview }).exchangeRates;
+}
+
+export function createStockPriceSelection(preview) {
+  return createMarketDataSelection({ stockPrices: preview }).stockPrices;
 }
 
 function getSelectedExchangePreviewItems(preview, selection) {
@@ -157,6 +196,46 @@ export function getMarketDataSelectionCounts(preview, selection) {
   };
 }
 
+export function getExchangeRatePreviewSummary(preview) {
+  if (!preview) return null;
+
+  const items = Array.isArray(preview.ratesPreview) ? preview.ratesPreview : [];
+  const skippedCount = items.filter((item) => item.errorCode === PROVIDER_REQUEST_SKIPPED).length;
+  const failedCount = items.filter(
+    (item) => item.status === "failed" && item.errorCode !== PROVIDER_REQUEST_SKIPPED,
+  ).length;
+
+  return {
+    source: preview.provider || "未設定",
+    successfulCount: Math.max(0, items.length - failedCount - skippedCount),
+    failedCount,
+    skippedCount,
+    providerCallCount: 1,
+  };
+}
+
+export function getLatestSavedExchangeRateAt(exchangeRateStore) {
+  const savedTimestamps = Object.values(exchangeRateStore?.rates ?? {})
+    .map((rate) => rate?.updatedAt)
+    .map((value) => {
+      if (value === null || value === undefined || value === "") return null;
+
+      const timestamp =
+        typeof value === "number" || (typeof value === "string" && /^-?\d+(?:\.\d+)?$/.test(value.trim()))
+          ? Number(value)
+          : new Date(value).getTime();
+
+      return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
+    })
+    .filter((timestamp) => timestamp !== null);
+
+  if (savedTimestamps.length > 0) {
+    return new Date(Math.max(...savedTimestamps)).toISOString();
+  }
+
+  return null;
+}
+
 export function applyMarketDataPreviewSelection({
   assets = [],
   exchangeRates,
@@ -174,7 +253,7 @@ export function applyMarketDataPreviewSelection({
       currency: item.currency,
       rateToTwd: toNumber(item.newRateToTwd),
       source: "market-data",
-      updatedAt: item.fetchedAt || appliedAt,
+      updatedAt: appliedAt,
     };
   }
 
@@ -210,6 +289,60 @@ export function applyMarketDataPreviewSelection({
     selectedRates,
     selectedPrices,
     appliedCount: selectedRates.length + selectedPrices.length,
+  };
+}
+
+export function applyExchangeRatePreviewSelection({
+  exchangeRates,
+  preview,
+  selection,
+  appliedAt = new Date().toISOString(),
+}) {
+  const result = applyMarketDataPreviewSelection({
+    assets: [],
+    exchangeRates,
+    preview: {
+      exchangeRates: preview,
+      stockPrices: { pricePreview: [] },
+    },
+    selection: {
+      exchangeRates: selection,
+      stockPrices: {},
+    },
+    appliedAt,
+  });
+
+  return {
+    exchangeRates: result.exchangeRates,
+    selectedRates: result.selectedRates,
+    appliedCount: result.selectedRates.length,
+  };
+}
+
+export function applyStockPricePreviewSelection({
+  assets,
+  preview,
+  selection,
+  appliedAt = new Date().toISOString(),
+}) {
+  const result = applyMarketDataPreviewSelection({
+    assets,
+    exchangeRates: null,
+    preview: {
+      exchangeRates: { ratesPreview: [] },
+      stockPrices: preview,
+    },
+    selection: {
+      exchangeRates: {},
+      stockPrices: selection,
+    },
+    appliedAt,
+  });
+
+  return {
+    assets: result.assets,
+    selectedPrices: result.selectedPrices,
+    appliedCount: result.selectedPrices.length,
   };
 }
 

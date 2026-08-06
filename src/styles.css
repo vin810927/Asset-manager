@@ -1403,12 +1403,10 @@ h2 {
   align-items: center;
 }
 
-.exchange-rate-actions .icon-button,
-.exchange-rate-update-button {
+.exchange-rate-actions .icon-button {
   flex: 0 0 auto;
 }
 
-.exchange-rate-update-button,
 .exchange-rate-save-button {
   border: 0;
   border-radius: 999px;
@@ -1418,24 +1416,16 @@ h2 {
   white-space: nowrap;
 }
 
-.exchange-rate-update-button {
-  min-height: 34px;
-  padding: 7px 10px;
-  font-size: 0.78rem;
-}
-
 .exchange-rate-save-button {
   min-height: 34px;
   padding: 7px 11px;
   font-size: 0.76rem;
 }
 
-.exchange-rate-update-button:hover,
 .exchange-rate-save-button:hover {
   background: var(--control-hover);
 }
 
-.exchange-rate-update-button:disabled,
 .exchange-rate-save-button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
@@ -1581,6 +1571,8 @@ h2 {
 .market-data-section {
   display: grid;
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
   margin-bottom: 16px;
 }
 
@@ -1607,6 +1599,28 @@ h2 {
   line-height: 1.45;
 }
 
+.market-data-query-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.market-data-action-group {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  align-content: start;
+}
+
+.market-data-action-group small {
+  color: var(--soft-text);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .market-data-actions {
   display: grid;
   gap: 5px;
@@ -1616,7 +1630,12 @@ h2 {
 
 .market-data-check-button,
 .market-data-apply-button {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  justify-content: center;
   min-height: 38px;
+  max-width: 100%;
   border-radius: 999px;
   padding: 0 15px;
   font-weight: 850;
@@ -1654,6 +1673,12 @@ h2 {
   opacity: 0.48;
 }
 
+.market-data-tw-disabled {
+  border-color: var(--row-border);
+  background: color-mix(in srgb, var(--control-bg) 58%, var(--panel-bg));
+  color: var(--soft-text);
+}
+
 .market-data-action-note {
   max-width: 280px;
   color: var(--soft-text);
@@ -1681,6 +1706,8 @@ h2 {
 .market-data-status {
   display: flex;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   border: 1px solid var(--row-border);
   border-radius: 12px;
@@ -1705,6 +1732,8 @@ h2 {
 .market-data-preview {
   display: grid;
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .market-data-preview-header > div {
@@ -1721,6 +1750,8 @@ h2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
   align-items: start;
 }
 
@@ -1735,10 +1766,36 @@ h2 {
   padding: 10px;
 }
 
+.market-data-panel-title > div {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  align-items: center;
+}
+
 .market-data-panel-title span {
   color: var(--soft-text);
   font-size: 0.78rem;
   font-weight: 800;
+}
+
+.market-data-panel-summary,
+.market-data-panel-message {
+  margin: 0;
+  color: var(--soft-text);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.market-data-panel-message {
+  border-left: 3px solid var(--row-border);
+  padding-left: 8px;
+}
+
+.market-data-panel-message.is-error {
+  border-left-color: var(--warning-border);
+  color: var(--text);
 }
 
 .market-data-list {
@@ -3040,10 +3097,6 @@ select:focus {
     display: none;
   }
 
-  .exchange-rate-update-button {
-    min-height: 34px;
-  }
-
   .exchange-popover {
     box-sizing: border-box;
     width: 100%;
@@ -3080,10 +3133,19 @@ select:focus {
     flex-direction: column;
   }
 
+  .market-data-query-actions {
+    grid-template-columns: 1fr;
+  }
+
   .market-data-actions,
   .market-data-check-button,
   .market-data-apply-button {
     width: 100%;
+  }
+
+  .market-data-check-button,
+  .market-data-apply-button {
+    white-space: normal;
   }
 
   .market-data-actions {
@@ -3097,6 +3159,15 @@ select:focus {
 
   .market-data-grid {
     grid-template-columns: 1fr;
+  }
+
+  .market-data-panel-title {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .market-data-panel-title > div {
+    justify-content: space-between;
   }
 
   .market-data-status {

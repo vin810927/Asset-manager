@@ -114,3 +114,7 @@
 - [x] v1.7：Alpha Vantage 多標的 preview 依 normalized symbol 去重並序列查詢，quota 後停止且保留 partial result
 - [x] v1.7：忽略 Wrangler 本機產物的 ESLint 掃描，避免 `.wrangler/**` 污染 lint
 - [x] v1.7：建立行情 preview secondary / apply primary action hierarchy，並統一 invalid selection eligibility
+- [x] v1.7.1：拆分匯率、美股與台股行情操作，preview / apply state 互相隔離
+- [x] v1.7.1：美股 payload 排除 TW / unknown holdings，台股入口 disabled 且不呼叫 provider
+- [x] v1.7.1：移除上方匯率設定的重複線上更新入口，外部匯率只走 preview-first 行情流程
+- [x] v1.7.1：修正正式匯率時間彙總，無資料不再落到 Unix epoch，preview 未套用不改 header

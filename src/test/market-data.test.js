@@ -17,20 +17,36 @@ import { createCloudStore } from "../data/cloudStore.js";
 import { DATA_SOURCE_MODES, STALE_CLOUD_DATA_ERROR_CODE, createDataSource } from "../data/dataSource.js";
 import { createLocalStore } from "../data/localStore.js";
 import {
+  applyExchangeRatePreviewSelection,
   applyMarketDataPreviewSelection,
+  applyStockPricePreviewSelection,
   buildExchangeRatePreviewRequest,
   buildStockPricePreviewRequest,
+  createExchangeRateSelection,
   createMarketDataRequestGate,
   createMarketDataSelection,
+  createStockPriceSelection,
+  getExchangeRatePreviewSummary,
+  getLatestSavedExchangeRateAt,
   getMarketDataActionState,
   getMarketDataSelectionCounts,
   getStockPreviewRequestSummary,
   isApplicableExchangeRatePreview,
   isApplicablePricePreview,
   isMarketDataUpdateUiEnabled,
+  requestExchangeRatePreview,
+  requestUsStockPricePreview,
 } from "../marketData/marketData.js";
 import { buildAiReadyReportInput, buildAssetReport, buildMarkdownAssetReport } from "../report/buildAssetReport.js";
-import { createExchangeRateStore, formatRate, parseAssetsCsv, parseBackupPayload } from "../utils.js";
+import {
+  createExchangeRateStore,
+  formatDateTime,
+  formatRate,
+  parseAssetsCsv,
+  parseBackupPayload,
+  parseExchangeRateStore,
+  setManualExchangeRate,
+} from "../utils.js";
 import { assetsFixture, exchangeRatesFixture, financialGoalsFixture, FIXED_NOW } from "./fixtures.js";
 
 const ACCESS_ENV = {
@@ -665,36 +681,190 @@ describe("v1.7 market data preview API", () => {
 });
 
 describe("v1.7 market data frontend helpers", () => {
-  it("行情更新 actions 使用真正 button，並提供清楚的 fetching / applying 狀態", () => {
+  it("匯率與美股 actions 使用獨立 button label 與 fetching / applying 狀態", () => {
     const appSource = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
-    const idle = getMarketDataActionState({ updateEnabled: true });
-    const preview = getMarketDataActionState({ hasPreview: true, updateEnabled: true });
-    const fetching = getMarketDataActionState({ hasPreview: true, isChecking: true, selectedCount: 2 });
-    const emptyApply = getMarketDataActionState({ hasPreview: true, selectedCount: 0 });
-    const readyApply = getMarketDataActionState({ hasPreview: true, selectedCount: 2 });
-    const applying = getMarketDataActionState({ hasPreview: true, isApplying: true, selectedCount: 2 });
+    const exchangeIdle = getMarketDataActionState({ scope: "exchangeRates", updateEnabled: true });
+    const exchangePreview = getMarketDataActionState({ scope: "exchangeRates", hasPreview: true, updateEnabled: true });
+    const exchangeFetching = getMarketDataActionState({
+      scope: "exchangeRates",
+      hasPreview: true,
+      isChecking: true,
+      selectedCount: 2,
+    });
+    const usIdle = getMarketDataActionState({ scope: "usStocks", updateEnabled: true });
+    const usPreview = getMarketDataActionState({ scope: "usStocks", hasPreview: true, updateEnabled: true });
+    const emptyApply = getMarketDataActionState({ scope: "usStocks", hasPreview: true, selectedCount: 0 });
+    const readyApply = getMarketDataActionState({ scope: "usStocks", hasPreview: true, selectedCount: 2 });
+    const applying = getMarketDataActionState({
+      scope: "usStocks",
+      hasPreview: true,
+      isApplying: true,
+      selectedCount: 2,
+    });
 
     expect(appSource).toMatch(/<button[\s\S]{0,180}className="market-data-check-button secondary-action"/);
     expect(appSource).toMatch(/<button[\s\S]{0,180}className="market-data-apply-button primary-action"/);
-    expect(idle).toMatchObject({ checkLabel: "檢查行情更新", checkDisabled: false });
-    expect(preview.checkLabel).toBe("重新檢查行情");
-    expect(fetching).toMatchObject({ checkLabel: "檢查中…", checkDisabled: true, checkAriaBusy: true, applyDisabled: true });
-    expect(emptyApply).toMatchObject({ applyLabel: "套用選取更新（0）", applyDisabled: true });
-    expect(readyApply).toMatchObject({ applyLabel: "套用選取更新（2）", applyDisabled: false });
+    expect(appSource).toContain("台股尚未支援");
+    expect(exchangeIdle).toMatchObject({ checkLabel: "檢查匯率", checkDisabled: false });
+    expect(exchangePreview.checkLabel).toBe("重新檢查匯率");
+    expect(exchangeFetching).toMatchObject({
+      checkLabel: "檢查中…",
+      checkDisabled: true,
+      checkAriaBusy: true,
+      applyDisabled: true,
+    });
+    expect(usIdle.checkLabel).toBe("檢查美股收盤價");
+    expect(usPreview.checkLabel).toBe("重新檢查美股");
+    expect(emptyApply).toMatchObject({ applyLabel: "套用美股更新（0）", applyDisabled: true });
+    expect(readyApply).toMatchObject({ applyLabel: "套用美股更新（2）", applyDisabled: false });
     expect(applying).toMatchObject({ applyLabel: "套用中…", applyDisabled: true, applyAriaBusy: true });
+  });
+
+  it("上方匯率設定只保留正式資料時間、展開按鈕與手動儲存", () => {
+    const appSource = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
+    const exchangeSection = appSource.slice(
+      appSource.indexOf('<section className="exchange-shell exchange-rate-section">'),
+      appSource.indexOf('<section className="panel market-data-section">'),
+    );
+
+    expect(exchangeSection).toContain("<strong>匯率設定</strong>");
+    expect(exchangeSection).toContain("最近套用／儲存：");
+    expect(exchangeSection).toContain("aria-expanded={isExchangePanelOpen}");
+    expect(exchangeSection).toContain("setIsExchangePanelOpen");
+    expect(exchangeSection).toContain("saveManualRate(row.currency)");
+    expect(exchangeSection).toContain("線上匯率來源：");
+    expect(exchangeSection).toContain("正式資料仍以最近套用或手動儲存結果為準");
+    expect(exchangeSection).not.toContain("exchange-rate-update-button");
+    expect(exchangeSection).not.toContain("線上更新匯率");
+    expect(appSource).not.toContain("updateLatestExchangeRates");
+    expect(appSource).not.toContain("fetchLatestExchangeRates");
+  });
+
+  it("沒有正式時間或 timestamp 無效時顯示尚未更新，不會落到 1970 / Invalid Date", () => {
+    const invalidStores = [
+      createExchangeRateStore(),
+      { fetchedAt: "2026-07-30T00:00:00.000Z", rates: { USD: { updatedAt: null } } },
+      { rates: { USD: { updatedAt: 0 } } },
+      { rates: { USD: { updatedAt: -1 } } },
+      { rates: { USD: { updatedAt: Number.NaN } } },
+      { rates: { USD: { updatedAt: "not-a-date" } } },
+      { rates: { USD: { updatedAt: "1970-01-01T00:00:00.000Z" } } },
+    ];
+
+    for (const store of invalidStores) {
+      const savedAt = getLatestSavedExchangeRateAt(store);
+      expect(savedAt).toBeNull();
+      expect(formatDateTime(savedAt)).toBe("尚未更新");
+    }
+  });
+
+  it("手動儲存會更新正式時間，多幣別時取最新 row updatedAt", () => {
+    const initialStore = createExchangeRateStore();
+    const manuallySaved = setManualExchangeRate(initialStore, "USD", 32.5);
+    const multipleManualRates = {
+      ...manuallySaved,
+      rates: {
+        ...manuallySaved.rates,
+        USD: { ...manuallySaved.rates.USD, updatedAt: "2026-07-01T00:00:00.000Z" },
+        JPY: { rateToTwd: 0.21, source: "manual", updatedAt: "2026-07-02T00:00:00.000Z" },
+      },
+    };
+
+    expect(manuallySaved.rates.USD).toMatchObject({
+      rateToTwd: 32.5,
+      source: "manual",
+    });
+    expect(getLatestSavedExchangeRateAt(manuallySaved)).toBe(manuallySaved.rates.USD.updatedAt);
+    expect(getLatestSavedExchangeRateAt(multipleManualRates)).toBe("2026-07-02T00:00:00.000Z");
+  });
+
+  it("preview 未套用不改正式時間，套用後以 appliedAt 更新而非 provider fetchedAt", async () => {
+    const providerFetchedAt = "2026-07-01T00:00:00.000Z";
+    const appliedAt = "2026-07-03T00:00:00.000Z";
+    const initialStore = createExchangeRateStore();
+    const preview = {
+      ok: true,
+      provider: "mock-rates",
+      fetchedAt: providerFetchedAt,
+      ratesPreview: [{ currency: "USD", status: "ready", newRateToTwd: 32, fetchedAt: providerFetchedAt }],
+    };
+    const dataSource = {
+      previewMarketExchangeRates: vi.fn(async () => preview),
+      saveExchangeRates: vi.fn(async (rates) => rates),
+    };
+
+    const receivedPreview = await requestExchangeRatePreview({
+      dataSource,
+      exchangeRates: initialStore,
+    });
+
+    expect(receivedPreview).toBe(preview);
+    expect(dataSource.saveExchangeRates).not.toHaveBeenCalled();
+    expect(getLatestSavedExchangeRateAt(initialStore)).toBeNull();
+
+    const applied = applyExchangeRatePreviewSelection({
+      exchangeRates: initialStore,
+      preview: receivedPreview,
+      selection: { USD: true },
+      appliedAt,
+    });
+
+    expect(applied.exchangeRates.rates.USD.rateToTwd).toBe(32);
+    expect(applied.exchangeRates.rates.USD.updatedAt).toBe(appliedAt);
+    expect(applied.exchangeRates.fetchedAt).toBe(providerFetchedAt);
+    expect(getLatestSavedExchangeRateAt(applied.exchangeRates)).toBe(appliedAt);
+    expect(dataSource.saveExchangeRates).not.toHaveBeenCalled();
+  });
+
+  it("正式匯率時間經 local reload 與 Cloud Mode 回傳後保持一致", async () => {
+    const savedStore = {
+      ...createExchangeRateStore(),
+      rates: {
+        ...createExchangeRateStore().rates,
+        USD: {
+          currency: "USD",
+          rateToTwd: 32,
+          source: "manual",
+          updatedAt: "2026-07-04T00:00:00.000Z",
+        },
+      },
+    };
+    const localReloaded = parseExchangeRateStore(JSON.parse(JSON.stringify(savedStore)));
+    const cloudStore = createCloudStore({
+      fetcher: vi.fn(async () =>
+        Response.json({
+          ok: true,
+          exchangeRates: JSON.parse(JSON.stringify(savedStore)),
+        }),
+      ),
+    });
+    const cloudReloaded = await cloudStore.getExchangeRates();
+
+    expect(getLatestSavedExchangeRateAt(localReloaded)).toBe("2026-07-04T00:00:00.000Z");
+    expect(getLatestSavedExchangeRateAt(cloudReloaded)).toBe("2026-07-04T00:00:00.000Z");
   });
 
   it("market-data preview 兩欄使用自然高度，手機 breakpoint 改為單欄", () => {
     const stylesSource = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
     const gridBlock = stylesSource.match(/\.market-data-grid\s*\{([^}]*)\}/)?.[1] ?? "";
     const panelBlock = stylesSource.match(/\.market-data-panel\s*\{([^}]*)\}/)?.[1] ?? "";
+    const actionGridBlock = stylesSource.match(/\.market-data-query-actions\s*\{([^}]*)\}/)?.[1] ?? "";
 
     expect(gridBlock).toContain("align-items: start");
+    expect(gridBlock).toContain("min-width: 0");
+    expect(gridBlock).toContain("max-width: 100%");
     expect(gridBlock).not.toMatch(/(?:min-)?height\s*:/);
     expect(panelBlock).toContain("align-content: start");
     expect(panelBlock).toContain("min-width: 0");
     expect(panelBlock).not.toMatch(/(?:min-)?height\s*:/);
+    expect(actionGridBlock).toContain("grid-template-columns: repeat(3, minmax(0, 1fr))");
     expect(stylesSource).toMatch(/@media \(max-width: 860px\)[\s\S]*?\.market-data-grid\s*\{\s*grid-template-columns: 1fr;/);
+    expect(stylesSource).toMatch(
+      /@media \(max-width: 860px\)[\s\S]*?\.market-data-query-actions\s*\{\s*grid-template-columns: 1fr;/,
+    );
+    expect(stylesSource).toMatch(
+      /@media \(max-width: 860px\)[\s\S]*?\.market-data-check-button,[\s\S]*?\.market-data-apply-button\s*\{\s*white-space: normal;/,
+    );
   });
 
   it("前端 feature flag 預設停用", () => {
@@ -703,7 +873,7 @@ describe("v1.7 market data frontend helpers", () => {
     expect(isMarketDataUpdateUiEnabled({ VITE_ENABLE_MARKET_DATA_UPDATE: "true" })).toBe(true);
   });
 
-  it("會建立匯率與股票 preview request，不包含 raw user identity", () => {
+  it("會建立匯率與僅限美股的 preview request，不包含 raw user identity", () => {
     const exchangeRequest = buildExchangeRatePreviewRequest(exchangeRatesFixture);
     const stockRequest = buildStockPricePreviewRequest(assetsFixture);
     const text = JSON.stringify({ exchangeRequest, stockRequest });
@@ -711,8 +881,112 @@ describe("v1.7 market data frontend helpers", () => {
     expect(exchangeRequest.baseCurrency).toBe("TWD");
     expect(exchangeRequest.currencies).toContain("USD");
     expect(stockRequest.holdings.every((holding) => ["stock", "etf"].includes(holding.type))).toBe(true);
+    expect(stockRequest.holdings.every((holding) => holding.market === "US")).toBe(true);
+    expect(stockRequest.holdings.map((holding) => holding.assetId)).toEqual(["stock-usd"]);
+    expect(stockRequest.holdings.some((holding) => holding.ticker === "2330")).toBe(false);
     expect(text).not.toContain("email");
     expect(text).not.toContain("token");
+  });
+
+  it("匯率與美股 request helper 只呼叫各自 endpoint", async () => {
+    const dataSource = {
+      previewMarketExchangeRates: vi.fn(async () => ({ ok: true, ratesPreview: [] })),
+      previewMarketStockPrices: vi.fn(async () => ({ ok: true, pricePreview: [] })),
+    };
+
+    await requestExchangeRatePreview({ dataSource, exchangeRates: exchangeRatesFixture });
+    expect(dataSource.previewMarketExchangeRates).toHaveBeenCalledTimes(1);
+    expect(dataSource.previewMarketStockPrices).not.toHaveBeenCalled();
+
+    dataSource.previewMarketExchangeRates.mockClear();
+    await requestUsStockPricePreview({ dataSource, assets: assetsFixture });
+    expect(dataSource.previewMarketStockPrices).toHaveBeenCalledTimes(1);
+    expect(dataSource.previewMarketExchangeRates).not.toHaveBeenCalled();
+    expect(dataSource.previewMarketStockPrices.mock.calls[0][0].holdings).toEqual([
+      expect.objectContaining({ assetId: "stock-usd", ticker: "AAPL", market: "US" }),
+    ]);
+  });
+
+  it("App handlers 使用獨立 state、gate 與 endpoint，重新檢查不會清除另一類 preview", () => {
+    const appSource = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
+    const exchangeHandler = appSource.slice(
+      appSource.indexOf("async function checkExchangeRateUpdates"),
+      appSource.indexOf("async function checkUsStockPriceUpdates"),
+    );
+    const stockHandler = appSource.slice(
+      appSource.indexOf("async function checkUsStockPriceUpdates"),
+      appSource.indexOf("function toggleMarketDataExchange"),
+    );
+
+    expect(exchangeHandler).toContain("exchangeRatePreviewGateRef.current.tryStart()");
+    expect(exchangeHandler).toContain("requestExchangeRatePreview");
+    expect(exchangeHandler).toContain("setExchangeRatesPreview");
+    expect(exchangeHandler).not.toContain("requestUsStockPricePreview");
+    expect(exchangeHandler).not.toContain("setUsStockPricePreview");
+    expect(stockHandler).toContain("usStockPreviewGateRef.current.tryStart()");
+    expect(stockHandler).toContain("requestUsStockPricePreview");
+    expect(stockHandler).toContain("setUsStockPricePreview");
+    expect(stockHandler).not.toContain("requestExchangeRatePreview");
+    expect(stockHandler).not.toContain("setExchangeRatesPreview");
+  });
+
+  it("App 的匯率與美股 apply handler 不會寫入另一類 state", () => {
+    const appSource = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
+    const exchangeApplyHandler = appSource.slice(
+      appSource.indexOf("async function applySelectedExchangeRateUpdates"),
+      appSource.indexOf("async function applySelectedUsStockUpdates"),
+    );
+    const stockApplyHandler = appSource.slice(
+      appSource.indexOf("async function applySelectedUsStockUpdates"),
+      appSource.indexOf("function changeFinancialGoalDraft"),
+    );
+
+    expect(exchangeApplyHandler).toContain("applyExchangeRatePreviewSelection");
+    expect(exchangeApplyHandler).toContain("setExchangeRates");
+    expect(exchangeApplyHandler).not.toContain("setAssets");
+    expect(exchangeApplyHandler).not.toContain("setUsStockPricePreview");
+    expect(stockApplyHandler).toContain("applyStockPricePreviewSelection");
+    expect(stockApplyHandler).toContain("setAssets");
+    expect(stockApplyHandler).not.toContain("setExchangeRates");
+    expect(stockApplyHandler).not.toContain("setExchangeRatesPreview");
+  });
+
+  it("台股入口固定 disabled，且 TW holdings 不會進入美股 payload", () => {
+    const appSource = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
+    const taiwanButton = appSource.match(
+      /<button[\s\S]*?className="market-data-check-button market-data-tw-disabled secondary-action"[\s\S]*?台股尚未支援[\s\S]*?<\/button>/,
+    )?.[0];
+    const request = buildStockPricePreviewRequest([
+      { id: "tw-stock", type: "stock", ticker: "2330", currency: "TWD", market: "TW" },
+      { id: "tw-etf", type: "etf", ticker: "0050", currency: "TWD" },
+      { id: "us-stock", type: "stock", ticker: "MSFT", currency: "USD", market: "US" },
+    ]);
+
+    expect(taiwanButton).toContain("disabled");
+    expect(appSource).toContain("目前尚未設定台股收盤價資料來源。");
+    expect(request.holdings).toEqual([
+      expect.objectContaining({ assetId: "us-stock", ticker: "MSFT", market: "US" }),
+    ]);
+  });
+
+  it("匯率 summary 與 selection 不依賴股票 preview", () => {
+    const preview = {
+      provider: "mock-rates",
+      ratesPreview: [
+        { currency: "USD", status: "ready", newRateToTwd: 32 },
+        { currency: "JPY", status: "needs_review", newRateToTwd: 0.22 },
+        { currency: "EUR", status: "failed", newRateToTwd: null },
+      ],
+    };
+
+    expect(createExchangeRateSelection(preview)).toEqual({ USD: true, JPY: false, EUR: false });
+    expect(getExchangeRatePreviewSummary(preview)).toEqual({
+      source: "mock-rates",
+      successfulCount: 2,
+      failedCount: 1,
+      skippedCount: 0,
+      providerCallCount: 1,
+    });
   });
 
   it("needsReview 預設不勾，failed 不會被套用", () => {
@@ -924,6 +1198,94 @@ describe("v1.7 market data frontend helpers", () => {
     expect(nextStock.buyPrice).toBe(stockAsset.buyPrice);
     expect(result.assets.find((asset) => asset.id === "cash-1")).toEqual(cashAsset);
     expect(result.assets.find((asset) => asset.id === "loan-1")).toEqual(loanAsset);
+  });
+
+  it("匯率與美股 apply helper 各自只更新允許的資料", () => {
+    const stockAsset = {
+      ...assetsFixture.find((asset) => asset.type === "stock" && asset.currency === "USD"),
+      id: "stock-us-1",
+      marketPrice: 100,
+    };
+    const rateResult = applyExchangeRatePreviewSelection({
+      exchangeRates: exchangeRatesFixture,
+      preview: {
+        provider: "mock-rates",
+        fetchedAt: FIXED_NOW,
+        ratesPreview: [{ currency: "USD", status: "ready", newRateToTwd: 32, fetchedAt: FIXED_NOW }],
+      },
+      selection: { USD: true },
+      appliedAt: FIXED_NOW,
+    });
+    const stockResult = applyStockPricePreviewSelection({
+      assets: [stockAsset],
+      preview: {
+        provider: "mock-stocks",
+        fetchedAt: FIXED_NOW,
+        pricePreview: [
+          {
+            assetId: "stock-us-1",
+            status: "ready",
+            newMarketPrice: 125,
+            priceCurrency: "USD",
+            priceDate: "2026-06-15",
+            source: "mock-stocks",
+            basis: "latest-close",
+          },
+        ],
+      },
+      selection: { "stock-us-1": true },
+      appliedAt: FIXED_NOW,
+    });
+
+    expect(rateResult.appliedCount).toBe(1);
+    expect(rateResult.exchangeRates.rates.USD.rateToTwd).toBe(32);
+    expect(Object.hasOwn(rateResult, "assets")).toBe(false);
+    expect(stockResult.appliedCount).toBe(1);
+    expect(stockResult.assets[0].marketPrice).toBe(125);
+    expect(stockResult.assets[0].shares).toBe(stockAsset.shares);
+    expect(stockResult.assets[0].buyPrice).toBe(stockAsset.buyPrice);
+    expect(stockResult.assets[0].ticker).toBe(stockAsset.ticker);
+    expect(Object.hasOwn(stockResult, "exchangeRates")).toBe(false);
+  });
+
+  it("獨立 selection count 仍會過濾 failed、skipped 與 unsupported", () => {
+    const exchangePreview = {
+      ratesPreview: [
+        { currency: "USD", status: "ready", newRateToTwd: 32 },
+        { currency: "JPY", status: "failed", newRateToTwd: 0.2 },
+      ],
+    };
+    const stockPreview = {
+      pricePreview: [
+        { assetId: "ready", status: "ready", newMarketPrice: 100, source: "Alpha Vantage" },
+        {
+          assetId: "skipped",
+          status: "needs_review",
+          errorCode: "provider_request_skipped",
+          newMarketPrice: 200,
+          source: "Alpha Vantage",
+        },
+        { assetId: "unsupported", status: "needs_review", newMarketPrice: null, source: "unsupported" },
+      ],
+    };
+
+    expect(
+      getMarketDataSelectionCounts(
+        { exchangeRates: exchangePreview, stockPrices: { pricePreview: [] } },
+        { exchangeRates: { USD: true, JPY: true }, stockPrices: {} },
+      ),
+    ).toEqual({ exchangeRateCount: 1, stockPriceCount: 0 });
+    expect(
+      getMarketDataSelectionCounts(
+        { exchangeRates: { ratesPreview: [] }, stockPrices: stockPreview },
+        { exchangeRates: {}, stockPrices: { ready: true, skipped: true, unsupported: true } },
+      ),
+    ).toEqual({ exchangeRateCount: 0, stockPriceCount: 1 });
+    expect(createStockPriceSelection(stockPreview)).toEqual({
+      ready: true,
+      skipped: false,
+      unsupported: false,
+    });
   });
 
   it("localStorage mode 可套用 market data helper 後維持 JSON / CSV import 相容", () => {

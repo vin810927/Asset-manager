@@ -1,5 +1,25 @@
 # Decisions
 
+## 2026-07-26：v1.7.1 行情查詢與套用依資料類型隔離
+
+### 決策
+將 v1.7 單一「檢查行情更新」拆成「檢查匯率」、「檢查美股收盤價」與 disabled 的「台股尚未支援」。匯率與美股各自維護 fetching、preview、selection、error、summary、request gate 與 apply gate；重新查詢或套用其中一類，不清除或改寫另一類 state。
+
+「檢查匯率」只呼叫 `/api/market-data/exchange-rates/preview`，套用時只更新 exchangeRates。「檢查美股收盤價」只呼叫 `/api/market-data/stock-prices/preview`，前端 request 只保留判定為 US、類型為 stock / ETF、且 ticker 有效的 holdings；套用時只更新既有 market price 欄位。台股按鈕固定 disabled，不呼叫任何 API；TW / unknown holdings 不送往 Alpha Vantage。
+
+上方「匯率設定」不再提供直接線上更新入口，只保留最近正式套用 / 儲存時間、展開 / 收合、各幣別顯示與個別手動儲存。所有外部 ExchangeRate-API 查詢必須由「行情更新 → 檢查匯率」觸發，並經過 preview、人工選取與套用；header 顯示時間只取正式匯率 row 的 `updatedAt`。Preview 套用時以使用者按下套用的 `appliedAt` 寫入 selected rows，個別手動儲存則沿用該 row 的儲存時間。Provider `fetchedAt`、`sourceUpdatedAt`、`sourceNextUpdateAt` 與尚未套用的 preview 時間都不作為正式操作時間；沒有有效正數 timestamp 時顯示「尚未更新」。
+
+### 理由
+- ExchangeRate-API 與 Alpha Vantage 的額度、失敗狀態及使用情境不同，合併查詢會讓美股 quota 問題干擾匯率操作
+- 獨立 preview / apply 讓使用者能清楚控制 provider request 額度，也避免重新查詢一類時遺失另一類結果
+- 台股 provider 尚未確認前，明確停用比把台股送往不適用的美股 provider 更安全
+- 移除重複的直接匯率更新入口，可確保所有線上匯率都遵守 preview-first 的人工確認安全語意
+
+### 限制
+v1.7.1 不修改 ExchangeRate-API / Alpha Vantage adapter、ticker dedup、sequential request、quota early-stop、preview API response、資料 schema 或 D1 migration；不新增台股 provider、不做 remote D1 write、不呼叫 OpenAI，也不新增 dependency。
+
+---
+
 ## 2026-06-30：v1.7 手動行情更新採 preview-first
 
 ### 決策
